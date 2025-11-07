@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>管材定价优化（纯前端版）</title>
+<!-- UI: PicoCSS 极简样式 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<!-- CSV 解析 -->
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<!-- 线性规划求解器：javascript-lp-solver（纯 JS） -->
+<script src="https://cdn.jsdelivr.net/npm/javascript-lp-solver@0.4.24/prod/solver.js"></script>
+<style>
+  body { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+  .muted { color: #666; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
+  table { font-size: 0.95rem; }
+  th, td { white-space: nowrap; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .scroll-x { overflow-x: auto; }
+  .warn { color: #b84; }
+  .ok { color: #2a7; }
+  .err { color: #c33; }
+  .chip { background:#eef; padding:.2rem .5rem; border-radius:.6rem; font-size:.85rem; }
+</style>
+</head>
+<body>
+
+<main>
+  <h2>🛠️ 管材定价优化（纯前端 / GitHub Pages 可用）</h2>
+  <p class="muted">
+    目标：最大化 <span class="mono">∑(图纸量 × (系数2单价 − 成本))</span>（以「成本」为基线）。<br>
+    约束：报表误差 ≤ 阈值；价格单调不降；<span class="mono">p<sub>i</sub> ≤</span> 下一档统一价；<span class="mono">p<sub>i</sub> ≥</span> 每行最低系数2单价（或全局最低）；（可选）不低于成本。
+  </p>
+
+  <details>
+    <summary>数据列说明与示例</summary>
+    <ul>
+      <li>必需列：<b>项目名称</b>、<b>清单数量</b>、<b>图纸数量</b>、<b>统一系数单价</b></li>
+      <li>可选列：计量单位、成本单价、最低系数2单价（缺失时可用全局兜底）</li>
+      <li>项目名称若包含“DNxxx”，会按 DN 数字升序自动排序</li>
+    </ul>
+    <p class="mono chip">CSV 编码用 UTF-8 最稳；如果是 GBK 也会自动尝试解析。</p>
+  </details>
+
+  <hr>
+
+  <section class="grid-2">
+    <div>
+      <h4>① 上传 CSV</h4>
+      <input type="file" id="file" accept=".csv" />
+      <p class="muted">或点击下方按钮载入内置示例</p>
+      <button id="loadDemo" class="secondary">载入示例数据</button>
+    </div>
+
+    <div>
+      <h4>② 参数设置</h4>
+      <div class="grid-3">
+        <label>报表毛利误差上限（元）
+          <input type="number" id="tol" value="1000" step="100" min="0">
+        </label>
+        <label>全局最低系数2单价（兜底）
+          <input type="number" id="globalMinP" value="0" step="0.01" min="0">
+        </label>
+        <label>全局成本单价（兜底）
+          <input type="number" id="globalCost" value="0" step="0.01" min="0">
+        </label>
+      </div>
+      <label><input type="checkbox" id="enforceCost"> 启用成本约束（p_i 不低于成本）</label>
+    </div>
+  </section>
+
+  <div style="margin-top:1rem;">
+    <button id="solve" class="contrast">🚀 运行优化</button>
+    <span id="status" class="muted" style="margin-left:1rem;"></span>
+  </div>
+
+  <hr>
+
+  <h4>📥 输入数据预览</h4>
+  <div class="scroll-x">
+    <table id="inputTable"></table>
+  </div>
+
+  <h4 style="margin-top:1.5rem;">📤 优化结果</h4>
+  <div class="grid-3">
+    <article><header>真实毛利提升</header><strong id="uplift">-</strong></article>
+    <article><header>报表毛利偏差 (≤ 阈值)</header><strong id="reportedDiff">-</strong></article>
+    <article><header>求解状态</header><strong id="solveStatus">-</strong></article>
+  </div>
+
+  <div class="scroll-x" style="margin-top:1rem;">
+    <table id="outputTable"></table>
+  </div>
+
+  <button id="downloadCsv" class="secondary" style="margin-top:1rem;" disabled>下载结果 CSV</button>
+
+</main>
+
+<script>
+// ====== 工具：CSV 解析（多编码兜底） ======
+function parseCSV(file, cb) {
+  const tryParse = (encoding, next) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      encoding,
+      complete: results => {
+        // 如果全是空对象，视为失败
+        const rows = results.data || [];
+        const hasData = rows.some(r => Object.values(r).some(v => (v ?? "").toString().trim() !== ""));
+        if (hasData) cb(null, rows);
+        else next();
+      },
+      error: () => next()
+    });
+  };
+  tryParse("utf-8", () => tryParse("gbk", () => tryParse("latin1", () => cb(new Error("无法解析 CSV"), null))));
+}
+
+// ====== 工具：DN 解析 & 排序 ======
+function parseDN(str) {
+  const m = String(str || "").match(/DN\s*([0-9]+)/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+function sortByDN(rows) {
+  const withDN = rows.map((r, i) => ({ idx: i, dn: parseDN(r["项目名称"]), row: r }));
+  const hasAny = withDN.some(x => x.dn !== null);
+  if (!hasAny) return rows;
+  withDN.sort((a, b) => (a.dn ?? Infinity) - (b.dn ?? Infinity));
+  return withDN.map(x => x.row);
+}
+
+// ====== 工具：渲染表格 ======
+function renderTable(tableEl, rows, columns) {
+  tableEl.innerHTML = "";
+  if (!rows || rows.length === 0) { tableEl.innerHTML = "<tr><td class='muted'>无数据</td></tr>"; return; }
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  columns.forEach(c => {
+    const th = document.createElement("th");
+    th.textContent = c;
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  tableEl.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach(r => {
+    const tr = document.createElement("tr");
+    columns.forEach(c => {
+      const td = document.createElement("td");
+      const v = r[c];
+      td.textContent = (v === undefined || v === null) ? "" : v;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  tableEl.appendChild(tbody);
+}
+
+// ====== 读取/准备数据 ======
+const REQUIRED = ["项目名称","清单数量","图纸数量","统一系数单价"];
+const OPTIONAL = ["计量单位","成本单价","最低系数2单价"];
+
+let inputRows = [];   // 原始输入
+let outputRows = [];  // 结果
+
+const demoRows = [
+  {"项目名称":"HDPE双壁波纹管 DN150","计量单位":"m","清单数量":21.06,"图纸数量":70.26,"统一系数单价":16.42},
+  {"项目名称":"HDPE双壁波纹管 DN200","计量单位":"m","清单数量":130.74,"图纸数量":1718.58,"统一系数单价":20.45},
+  {"项目名称":"HDPE双壁波纹管 DN300","计量单位":"m","清单数量":9622.91,"图纸数量":8974.31,"统一系数单价":33.85},
+  {"项目名称":"HDPE双壁波纹管 DN400","计量单位":"m","清单数量":1628.36,"图纸数量":1741.75,"统一系数单价":56.27},
+  {"项目名称":"HDPE双壁波纹管 DN500","计量单位":"m","清单数量":512.81,"图纸数量":510.75,"统一系数单价":77.61},
+  {"项目名称":"HDPE双壁波纹管 DN600","计量单位":"m","清单数量":861.04,"图纸数量":876.10,"统一系数单价":105.22},
+  {"项目名称":"HDPE双壁波纹管 DN800","计量单位":"m","清单数量":656.34,"图纸数量":650.10,"统一系数单价":328.92},
+  {"项目名称":"HDPE双壁波纹管 DN1000","计量单位":"m","清单数量":342.51,"图纸数量":297.17,"统一系数单价":353.33},
+  {"项目名称":"HDPE双壁波纹管 DN1200","计量单位":"m","清单数量":342.54,"图纸数量":322.94,"统一系数单价":1481.82}
+];
+
+function normalizeNumbers(rows) {
+  return rows.map(r => {
+    const o = { ...r };
+    // 把全角/逗号去掉
+    for (const k of ["清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"]) {
+      if (o[k] !== undefined) {
+        const s = String(o[k]).replace(/,/g,"").replace(/\s+/g,"");
+        const v = parseFloat(s);
+        o[k] = isNaN(v) ? null : v;
+      }
+    }
+    return o;
+  });
+}
+
+function ensureColumns(rows) {
+  // 补齐可选列；计量单位默认为 "m"
+  return rows.map(r => ({
+    "项目名称": r["项目名称"],
+    "计量单位": r["计量单位"] ?? "m",
+    "清单数量": r["清单数量"],
+    "图纸数量": r["图纸数量"],
+    "统一系数单价": r["统一系数单价"],
+    "成本单价": r["成本单价"] ?? null,
+    "最低系数2单价": r["最低系数2单价"] ?? null
+  }));
+}
+
+function validateRequired(rows) {
+  const has = c => rows.every(r => r.hasOwnProperty(c));
+  for (const c of REQUIRED) {
+    if (!has(c)) throw new Error(`缺少必需列：${c}`);
+  }
+}
+
+// ====== 构建 LP 并求解（javascript-lp-solver） ======
+function solveLP(rows, tol, globalMinP, globalCost, enforceCost) {
+  const n = rows.length;
+  if (!n) throw new Error("表格为空");
+
+  // 取向量
+  const listQty = rows.map(r => +r["清单数量"] || 0);
+  const drawQty = rows.map(r => +r["图纸数量"] || 0);
+  const uprice  = rows.map(r => +r["统一系数单价"] || 0);
+
+  // 成本：逐行优先，其次全局（若全局<=0且逐行也缺，报错）
+  let cost = rows.map((r,i) => {
+    const c = r["成本单价"];
+    return (c !== null && !isNaN(+c)) ? +c : (globalCost>0 ? +globalCost : NaN);
+  });
+  if (cost.some(v => isNaN(v))) {
+    throw new Error("必须提供逐行【成本单价】或设置【全局成本单价】> 0");
+  }
+
+  // 最低系数2单价：逐行优先，其次全局
+  let minp = rows.map((r,i) => {
+    const m = r["最低系数2单价"];
+    return (m !== null && !isNaN(+m)) ? +m : +globalMinP;
+  });
+
+  // 目标：maximize ∑ drawQty[i] * (p_i - cost[i]) = ∑ drawQty[i]*p_i + 常数
+  // 在 javascript-lp-solver 中，目标只需要变量系数，常数项忽略
+  const model = {
+    optimize: "obj",
+    opType: "max",
+    constraints: {},
+    variables: {},
+    ints: {} // 全连续即可，不指定
+  };
+
+  // 变量定义 & 目标系数
+  // 约束将统一通过 constraints 的命名来组合
+  // reported_upper: ∑ listQty[i]*p_i <= reported_base + tol
+  const reportedBase = listQty.reduce((s, q, i) => s + q * uprice[i], 0);
+  model.constraints["reported_upper"] = { "max": reportedBase + tol };
+  // reported_lower: -∑ listQty[i]*p_i <= tol - reportedBase
+  model.constraints["reported_lower"] = { "max": tol - reportedBase };
+
+  // 单调不降：p_{i-1} - p_i <= 0  （i=1..n-1）
+  for (let i = 1; i < n; i++) {
+    model.constraints[`mono_${i}`] = { "max": 0 };
+  }
+  // 上限：p_i <= uprice[i+1]   （i=0..n-2）
+  for (let i = 0; i < n-1; i++) {
+    model.constraints[`cap_${i}`] = { "max": uprice[i+1] };
+  }
+  // 下限：-p_i <= -minp[i]  => p_i >= minp[i]
+  for (let i = 0; i < n; i++) {
+    model.constraints[`floor_${i}`] = { "max": -minp[i] };
+  }
+  // （可选）成本约束：p_i >= cost[i]  => -p_i <= -cost[i]
+  if (enforceCost) {
+    for (let i = 0; i < n; i++) {
+      model.constraints[`cost_${i}`] = { "max": -cost[i] };
+    }
+  }
+
+  // 每个变量的系数构建
+  for (let i = 0; i < n; i++) {
+    const name = `p_${i}`;
+    const v = { obj: drawQty[i] }; // 目标系数
+    // 报表约束
+    v["reported_upper"] = listQty[i];     // + listQty[i] * p_i
+    v["reported_lower"] = -listQty[i];    // - listQty[i] * p_i
+    // 单调：p_{i-1} - p_i <= 0
+    if (i > 0) v[`mono_${i}`] = -1;       // - p_i
+    if (i > 0) {
+      // 给前一个变量在 mono_i 中 +1
+      // 无法在此处给“前一个变量”赋系数，所以我们稍后补
+    }
+    // 上限：p_i <= uprice[i+1]
+    if (i < n-1) v[`cap_${i}`] = 1;
+    // 下限：-p_i <= -minp[i]
+    v[`floor_${i}`] = -1;
+    // 成本
+    if (enforceCost) v[`cost_${i}`] = -1;
+
+    model.variables[name] = v;
+  }
+  // 补齐“单调约束”里对前一项的 +1
+  // 在 solver.js 的建模里，系数是以变量为中心登记到约束名上的
+  // 因此我们需要给 p_{i-1} 在 mono_i 约束上 +1
+  for (let i = 1; i < n; i++) {
+    const prev = `p_${i-1}`;
+    model.variables[prev][`mono_${i}`] = (model.variables[prev][`mono_${i}`] || 0) + 1;
+  }
+
+  // 运行求解
+  const result = solver.Solve(model);
+
+  if (!result.feasible) {
+    throw new Error("无可行解（请检查误差阈值、下限、成本等参数是否过于严格）");
+  }
+
+  // 组装结果
+  const optP = Array.from({length:n}, (_,i) => result[`p_${i}`]);
+  const rowsOut = rows.map((r, i) => {
+    const p = +optP[i];
+    const jq = +r["图纸数量"] || 0;
+    const lq = +r["清单数量"] || 0;
+    const up = +r["统一系数单价"] || 0;
+    const c  = +cost[i];
+
+    return {
+      "项目名称": r["项目名称"],
+      "计量单位": r["计量单位"] ?? "m",
+      "清单数量": lq,
+      "图纸数量": jq,
+      "统一系数单价": up,
+      "清单量*统一系数单价": lq * up,       // 报表口径仍需
+      "系数2单价": p,
+      "图纸量*成本": jq * c,
+      "图纸量*系数2单价": jq * p,
+      "清单量*系数2单价": lq * p
+    };
+  });
+
+  // 汇总指标
+  const uplift = rowsOut.reduce((s, r) => s + (r["图纸量*系数2单价"] - r["图纸量*成本"]), 0);
+  const reportedDiff = rowsOut.reduce((s, r) => s + (r["清单量*系数2单价"] - r["清单量*统一系数单价"]), 0);
+
+  return { rowsOut, uplift, reportedDiff, status: "Optimal" };
+}
+
+// ====== 事件：载入示例 ======
+document.getElementById("loadDemo").addEventListener("click", () => {
+  inputRows = ensureColumns(normalizeNumbers(sortByDN(demoRows)));
+  renderTable(document.getElementById("inputTable"), inputRows, ["项目名称","计量单位","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"]);
+  document.getElementById("status").textContent = "已载入示例数据";
+});
+
+// ====== 事件：上传 CSV ======
+document.getElementById("file").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  parseCSV(f, (err, rows) => {
+    if (err) { alert(err.message || "CSV 解析失败"); return; }
+    try {
+      rows = normalizeNumbers(rows);
+      validateRequired(rows);
+      rows = ensureColumns(rows);
+      rows = sortByDN(rows);
+      inputRows = rows;
+      renderTable(document.getElementById("inputTable"), rows, ["项目名称","计量单位","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"]);
+      document.getElementById("status").textContent = "CSV 已载入";
+    } catch (e) {
+      alert(e.message);
+    }
+  });
+});
+
+// ====== 事件：求解 ======
+document.getElementById("solve").addEventListener("click", () => {
+  try {
+    if (!inputRows.length) {
+      // 默认用示例
+      inputRows = ensureColumns(normalizeNumbers(sortByDN(demoRows)));
+      renderTable(document.getElementById("inputTable"), inputRows, ["项目名称","计量单位","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"]);
+    }
+    const tol = parseFloat(document.getElementById("tol").value) || 0;
+    const globalMinP = parseFloat(document.getElementById("globalMinP").value) || 0;
+    const globalCost = parseFloat(document.getElementById("globalCost").value) || 0;
+    const enforceCost = document.getElementById("enforceCost").checked;
+
+    const { rowsOut, uplift, reportedDiff, status } =
+      solveLP(inputRows, tol, globalMinP, globalCost, enforceCost);
+
+    outputRows = rowsOut;
+    renderTable(
+      document.getElementById("outputTable"),
+      rowsOut,
+      ["项目名称","计量单位","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"]
+    );
+
+    // 指标显示
+    document.getElementById("uplift").textContent = uplift.toFixed(2);
+    document.getElementById("reportedDiff").textContent = reportedDiff.toFixed(2);
+    document.getElementById("solveStatus").textContent = status;
+    document.getElementById("status").textContent = "求解成功";
+    document.getElementById("downloadCsv").disabled = false;
+
+  } catch (e) {
+    document.getElementById("status").textContent = "求解失败";
+    document.getElementById("solveStatus").textContent = "Infeasible";
+    document.getElementById("downloadCsv").disabled = true;
+    alert(e.message || e);
+  }
+});
+
+// ====== 事件：下载 CSV ======
+document.getElementById("downloadCsv").addEventListener("click", () => {
+  if (!outputRows.length) return;
+  const headers = ["项目名称","计量单位","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
+  const csv = [headers.join(",")].concat(
+    outputRows.map(r => headers.map(h => r[h] ?? "").join(","))
+  ).join("\n");
+  const blob = new Blob(["\ufeff"+csv], {type: "text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "优化明细.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+
+</body>
+</html>
