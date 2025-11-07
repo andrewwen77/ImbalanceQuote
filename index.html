@@ -193,17 +193,23 @@ document.getElementById("file").addEventListener("change", e=>{
   const name = (f.name || "").toLowerCase();
 
   const handleRows = (rows)=>{
-    const fixed = rows.map(r=>({
-      "项目名称": r["项目名称"] ?? "",
-      "清单数量": num(r["清单数量"]),
-      "图纸数量": num(r["图纸数量"]),
-      "统一系数单价": num(r["统一系数单价"]),
-      "成本单价": num(r["成本单价"]),
-      "最低报价": num(r["最低报价"])
-    }));
-    loadRows(fixed);
-    document.getElementById("hint").textContent = "已导入：可直接在表内继续编辑";
-  };
+  const fixed = rows.map(r=>({
+    "项目名称": (r["项目名称"] ?? "").toString().trim(),
+    "清单数量": num(r["清单数量"]),
+    "图纸数量": num(r["图纸数量"]),
+    "统一系数单价": num(r["统一系数单价"]),
+    "成本单价": num(r["成本单价"]),
+    "最低系数2单价": num(r["最低系数2单价"] ?? r["最低报价"])
+  }));
+
+  // ✅ 新增：只保留“项目名称”非空的行
+  const cleaned = fixed.filter(r => r["项目名称"] !== "");
+
+  loadRows(cleaned);
+  document.getElementById("hint").textContent =
+    `已导入：有效行 ${cleaned.length} 条（已自动忽略无“项目名称”的行）`;
+};
+
 
   if (name.endsWith(".csv")) {
     parseCSV(f, (err, rows)=>{
@@ -371,6 +377,7 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
 
 
