@@ -36,7 +36,7 @@
     算法约束：<br>
     1. 在报价偏差不大于给定值前提下，追求利润最大化。<br>
     2. 大口径单价不低于小口径。<br>
-    3. 某口径报价不高于【下一档口径统一价乘以自定义百分比】，比如自定义百分比为20%，则DN1000管建议报价不高于DN1200管的统一价乘120%。<br>
+    3. 某口径报价不高于【下一档口径统一价乘以自定义百分比】，比如自定义百分比为120%，则DN1000管建议报价不高于DN1200管的统一价乘120%。<br>
     4. 建议报价不低于成本单价和最低报价中的较大值。<br>
   </p>
 
@@ -46,8 +46,8 @@
     <h4>① 上传数据</h4>
     <input type="file" id="file" accept=".csv" aria-label="上传数据"/>
     <small class="muted">
-      表格必须包含：项目名称、清单数量、图纸数量、统一系数单价、成本单价<br>
-      可选列：最低报价
+      表头为：项目名称、清单数量、图纸数量、统一系数单价、成本单价、最低报价<br>
+      上传内容可以比这些少，传上来再补充，但是传上来的列名称要一致，不然识别不到
     </small>
   </div>
 
@@ -58,14 +58,14 @@
         <input id="tol" type="number" value="1000" min="0" step="100" class="w-sm">
       </label>
       <label>超下档百分比（%）
-        <input id="capPct" type="number" value="100" min="1" max="1000" step="1" class="w-sm">
+        <input id="capPct" type="number" value="120" min="0" max="1000" step="1" class="w-sm">
       </label>
     </div>
   </div>
 </section>
 
   <!-- 录入表 -->
-  <h4 style="margin-top:1.2rem">③ 录入区（可直接编辑，支持左右滑动）</h4>
+  <h4 style="margin-top:1.2rem">③ 完善输入（可直接编辑，支持左右滑动）</h4>
   <div class="sheet">
     <table role="grid">
       <thead>
@@ -89,7 +89,7 @@
   </div>
 
   <!-- 结果展示 -->
-  <h4 style="margin-top:1.5rem">④ 结果</h4>
+  <h4 style="margin-top:1.5rem">④ 优化结果</h4>
 
   <div id="summaryCards" class="grid-3" style="display:none">
     <article><header>清单×统一价 合计</header><strong id="sumA">-</strong></article>
@@ -329,6 +329,7 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
 
 
