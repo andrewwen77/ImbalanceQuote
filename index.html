@@ -46,7 +46,14 @@
 <section id="topArea">
   <div>
     <h4>① 上传数据</h4>
-    <input type="file" id="file" accept=".csv, .xlsx, .xls" aria-label="上传数据"/>
+    <input
+      type="file"
+      id="file"
+      accept=".csv, .xlsx, .xls,
+              application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
+              application/vnd.ms-excel"
+      aria-label="上传数据"
+    />
     <small class="muted">
       表头为：项目名称、清单数量、图纸数量、统一系数单价、成本单价、最低报价<br>
       ！！注意：上传内容可以比这些少，传上来再补充，但是传上来的列名称要一致，不然识别不到！！
@@ -364,6 +371,7 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
 
 
