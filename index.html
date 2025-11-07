@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>管材报价助手（工程人员版）</title>
+<title>管材报价助手（工程版）</title>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -15,15 +15,12 @@
   .muted{color:#6b7280}
   .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
   .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
-  .scroll-x{overflow-x:auto}
-  table input{width:120px;max-width:120px}
-  table input[type="number"]{text-align:right}
-  .w-sm{width:120px}
-  .w-md{width:200px}
+  .sheet{overflow:auto;border:1px solid #e5e7eb;border-radius:.5rem;padding:.5rem}
+  table{border-collapse:separate;border-spacing:0;table-layout:auto;min-width:1000px}
+  th,td{white-space:nowrap;padding:.4rem .6rem}
+  table input{width:160px;max-width:none}
+  .w-sm{width:140px}
   .chip{background:#eef;padding:.2rem .5rem;border-radius:.6rem;font-size:.85rem}
-  .ok{color:#0a7}
-  .warn{color:#b80}
-  .err{color:#c33}
 </style>
 </head>
 <body>
@@ -31,35 +28,30 @@
 <main>
   <h2>管材报价助手</h2>
   <p class="muted">
-    说明：请在表格中录入或导入数据，点【开始计算】即可得到每个规格的建议报价（系数2单价）以及合计结果。<br>
+    按工程口径计算报价与利润。<br>
     口径：<span class="chip">报价偏差 = 清单×报价 − 清单×统一价</span>，
-    <span class="chip">真实利润 = 图纸×报价 − 图纸×成本</span>。
+    <span class="chip">真实利润 = 图纸×报价 − 图纸×成本</span>。<br>
+    系统自动保证：同系列口径越大，单价不低于小口径；某口径报价不高于“下一档统一价×上限百分比”。
   </p>
 
-  <!-- 顶部操作区 -->
+  <!-- 参数与上传 -->
   <section class="grid-2">
     <div>
-      <h4>① 数据来源</h4>
-      <input type="file" id="file" accept=".csv"/>
-      <small class="muted">支持 CSV；列需至少包含：项目名称、清单数量、图纸数量、统一系数单价。可选：计量单位、成本单价、最低系数2单价。</small><br>
-      <button id="btnDemo" class="secondary">载入示例数据</button>
+      <h4>① 上传数据</h4>
+      <input type="file" id="file" accept=".csv" aria-label="上传数据"/>
+      <small class="muted">CSV 至少包含：项目名称、清单数量、图纸数量、统一系数单价、成本单价；可选：最低系数2单价。</small>
     </div>
-
     <div>
-      <h4>② 计算规则（人话版）</h4>
+      <h4>② 规则设置</h4>
       <div class="grid-3">
         <label>与甲方清单口径允许的总差额（元）
           <input id="tol" type="number" value="1000" min="0" step="100" class="w-sm">
         </label>
-        <label>若未填每行成本，统一成本（元/米）
-          <input id="globalCost" type="number" value="0" min="0" step="0.01" class="w-sm">
-        </label>
-        <label>若未填每行最低报价，统一最低（元/米）
-          <input id="globalMinP" type="number" value="0" min="0" step="0.01" class="w-sm">
+        <label>下一档统一价上限（%）
+          <input id="capPct" type="number" value="100" min="1" max="1000" step="1" class="w-sm">
         </label>
       </div>
-      <label><input id="enforceCost" type="checkbox"> 报价不得低于成本</label>
-      <small class="muted">系统会自动保证：同系列口径越大，单价不低于小口径；且某口径报价不会高过下一档的招标统一价。</small>
+      <small class="muted">说明：成本不能为空；若“最低系数2单价”未填，默认按成本执行下限；最终下限取<span class="chip">max(成本, 最低报价)</span>。</small>
     </div>
   </section>
 
@@ -68,14 +60,13 @@
     <span id="hint" class="muted" style="margin-left:1rem"></span>
   </div>
 
-  <!-- 可编辑表 -->
-  <h4 style="margin-top:1.2rem">③ 录入区（可直接编辑，像 Excel 一样）</h4>
-  <div class="scroll-x">
-    <table id="editTable" role="grid">
+  <!-- 录入表 -->
+  <h4 style="margin-top:1.2rem">③ 录入区（可直接编辑，支持左右滑动）</h4>
+  <div class="sheet">
+    <table role="grid">
       <thead>
         <tr>
           <th>项目名称</th>
-          <th>计量单位</th>
           <th>清单数量</th>
           <th>图纸数量</th>
           <th>统一系数单价</th>
@@ -88,8 +79,8 @@
     <button id="btnAddRow" class="secondary" style="margin-top:.5rem">+ 新增一行</button>
   </div>
 
-  <!-- 结果 -->
-  <h4 style="margin-top:1.5rem">④ 计算结果</h4>
+  <!-- 结果展示 -->
+  <h4 style="margin-top:1.5rem">④ 结果</h4>
 
   <div id="summaryCards" class="grid-3" style="display:none">
     <article><header>清单×统一价 合计</header><strong id="sumA">-</strong></article>
@@ -102,7 +93,7 @@
     <article><header>真实利润（= ④ − ③）</header><strong id="profit">-</strong></article>
   </div>
 
-  <div class="scroll-x" style="margin-top:1rem">
+  <div class="sheet" style="margin-top:1rem">
     <table id="outTable"></table>
   </div>
 
@@ -110,83 +101,59 @@
 </main>
 
 <script>
-// ---------- 工具 ----------
+// ===== 工具 =====
 function parseCSV(file, cb){
-  const tryEnc = (enc, next)=>Papa.parse(file,{header:true,skipEmptyLines:true,encoding:enc,
-      complete:r=>{const rows=r.data||[];const ok=rows.some(x=>Object.values(x).some(v=>(v??"").toString().trim()!=="")); if(ok)cb(null,rows); else next();},
-      error:()=>next()});
+  const tryEnc=(enc,next)=>Papa.parse(file,{header:true,skipEmptyLines:true,encoding:enc,
+    complete:r=>{const rows=r.data||[];const ok=rows.some(x=>Object.values(x).some(v=>(v??"").toString().trim()!=="")); if(ok)cb(null,rows); else next();},
+    error:()=>next()});
   tryEnc("utf-8",()=>tryEnc("gbk",()=>tryEnc("latin1",()=>cb(new Error("无法解析CSV"),null))));
 }
 function parseDN(s){const m=String(s||"").match(/DN\s*([0-9]+)/i);return m?parseInt(m[1],10):null;}
-function sortByDN(rows){const tagged=rows.map(r=>({dn:parseDN(r["项目名称"]),r})); if(!tagged.some(x=>x.dn!==null))return rows; tagged.sort((a,b)=>(a.dn??1e9)-(b.dn??1e9)); return tagged.map(x=>x.r);}
+function sortByDN(rows){const t=rows.map((r)=>({dn:parseDN(r["项目名称"]),r})); if(!t.some(x=>x.dn!==null))return rows; t.sort((a,b)=>(a.dn??1e9)-(b.dn??1e9)); return t.map(x=>x.r);}
 function num(v){if(v===null||v===undefined) return null; const s=String(v).replace(/,/g,"").trim(); const x=parseFloat(s); return isNaN(x)?null:x;}
-function toFixed2(x){return (Math.round(x*100)/100).toFixed(2);}
-function el(t,attrs={},children=[]){const e=document.createElement(t); Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v)); children.forEach(c=>e.appendChild(c)); return e;}
+function to2(x){return (Math.round(x*100)/100).toFixed(2);}
 
-// ---------- 示例数据 ----------
-const demo = [
-  {"项目名称":"HDPE双壁波纹管 DN150","计量单位":"m","清单数量":21.06,"图纸数量":70.26,"统一系数单价":16.42,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN200","计量单位":"m","清单数量":130.74,"图纸数量":1718.58,"统一系数单价":20.45,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN300","计量单位":"m","清单数量":9622.91,"图纸数量":8974.31,"统一系数单价":33.85,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN400","计量单位":"m","清单数量":1628.36,"图纸数量":1741.75,"统一系数单价":56.27,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN500","计量单位":"m","清单数量":512.81,"图纸数量":510.75,"统一系数单价":77.61,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN600","计量单位":"m","清单数量":861.04,"图纸数量":876.10,"统一系数单价":105.22,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN800","计量单位":"m","清单数量":656.34,"图纸数量":650.10,"统一系数单价":328.92,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN1000","计量单位":"m","清单数量":342.51,"图纸数量":297.17,"统一系数单价":353.33,"成本单价":"","最低系数2单价":""},
-  {"项目名称":"HDPE双壁波纹管 DN1200","计量单位":"m","清单数量":342.54,"图纸数量":322.94,"统一系数单价":1481.82,"成本单价":"","最低系数2单价":""}
-];
-
-// ---------- 可编辑表 ----------
-const tbody = document.getElementById("tbody");
+// ===== 录入区 =====
+const tbody=document.getElementById("tbody");
 function rowToTr(r={}){
+  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"];
   const tr=document.createElement("tr");
-  const cols=["项目名称","计量单位","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"];
   cols.forEach(c=>{
     const td=document.createElement("td");
     const inp=document.createElement("input");
-    inp.type=(["清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"].includes(c)?"number":"text");
+    inp.type=(c==="项目名称"?"text":"number");
     if(inp.type==="number"){inp.step="0.01";inp.className="w-sm";}
-    else{inp.className="w-md";}
     inp.value=(r[c]??"");
-    td.appendChild(inp);
-    tr.appendChild(td);
+    td.appendChild(inp); tr.appendChild(td);
   });
   return tr;
 }
-function loadRows(rows){
-  tbody.innerHTML="";
-  sortByDN(rows).forEach(r=>tbody.appendChild(rowToTr(r)));
-}
-function getRowsFromTable(){
+function loadRows(rows){tbody.innerHTML=""; sortByDN(rows).forEach(r=>tbody.appendChild(rowToTr(r)));}
+function getRows(){
   const rows=[];
   [...tbody.querySelectorAll("tr")].forEach(tr=>{
-    const tds=[...tr.querySelectorAll("td input")];
-    rows.push({
-      "项目名称":tds[0].value.trim(),
-      "计量单位":tds[1].value.trim()||"m",
-      "清单数量":num(tds[2].value),
-      "图纸数量":num(tds[3].value),
-      "统一系数单价":num(tds[4].value),
-      "成本单价":num(tds[5].value),
-      "最低系数2单价":num(tds[6].value)
-    });
+    const t=[...tr.querySelectorAll("td input")];
+    const row={
+      "项目名称": t[0].value.trim(),
+      "清单数量": num(t[1].value),
+      "图纸数量": num(t[2].value),
+      "统一系数单价": num(t[3].value),
+      "成本单价": num(t[4].value),
+      "最低系数2单价": num(t[5].value)
+    };
+    if(row["项目名称"]) rows.push(row);
   });
-  return rows.filter(r=>r["项目名称"]);
+  return rows;
 }
+document.getElementById("btnAddRow").onclick=()=>tbody.appendChild(rowToTr({}));
 
-// 初始载入示例
-loadRows(demo);
-document.getElementById("btnAddRow").onclick=()=>tbody.appendChild(rowToTr({"计量单位":"m"}));
-
-// 导入 CSV
+// 上传 CSV → 填充表格
 document.getElementById("file").addEventListener("change",e=>{
   const f=e.target.files[0]; if(!f)return;
   parseCSV(f,(err,rows)=>{
     if(err){alert(err.message);return;}
-    // 只取需要的列，其他忽略
-    const fixed = rows.map(r=>({
+    const fixed=rows.map(r=>({
       "项目名称": r["项目名称"] ?? "",
-      "计量单位": r["计量单位"] ?? r['"计量\n单位"'] ?? "m",
       "清单数量": num(r["清单数量"]),
       "图纸数量": num(r["图纸数量"]),
       "统一系数单价": num(r["统一系数单价"]),
@@ -194,63 +161,69 @@ document.getElementById("file").addEventListener("change",e=>{
       "最低系数2单价": num(r["最低系数2单价"])
     }));
     loadRows(fixed);
-    document.getElementById("hint").textContent="已导入CSV，可直接编辑表格";
+    document.getElementById("hint").textContent="已导入：可直接在表内继续编辑";
   });
 });
 
-// 载入示例
-document.getElementById("btnDemo").onclick=()=>{loadRows(demo); document.getElementById("hint").textContent="已载入示例数据";};
-
-// ---------- 计算（内部用线性规划，但界面不暴露数学词） ----------
-function buildAndSolve(rows, tol, globalMinP, globalCost, enforceCost){
+// ===== 计算（内部用线性规划，但界面不暴露数学词） =====
+function buildAndSolve(rows, tol, capPct){
   const n=rows.length; if(!n) throw new Error("没有数据行");
+  // 基础校验：成本不能为空
+  if(rows.some(r=>r["成本单价"]===null||isNaN(r["成本单价"]))){
+    throw new Error("存在空的【成本单价】，请补全后再计算。");
+  }
 
-  const listQty=rows.map(r=>+r["清单数量"]||0);
-  const drawQty=rows.map(r=>+r["图纸数量"]||0);
-  const uprice =rows.map(r=>+r["统一系数单价"]||0);
-  const cost   =rows.map(r=>{
-    const c=r["成本单价"]; return (c!==null && !isNaN(+c))?+c:(globalCost>0?+globalCost:NaN);
+  const listQty = rows.map(r=>+r["清单数量"]    ||0);
+  const drawQty = rows.map(r=>+r["图纸数量"]    ||0);
+  const uprice  = rows.map(r=>+r["统一系数单价"]||0);
+  const cost    = rows.map(r=>+r["成本单价"]);
+  const minpRaw = rows.map(r=>r["最低系数2单价"]);
+
+  // 最终下限：max(成本, 最低报价(若空则视为成本))
+  const floor = rows.map((_,i)=>{
+    const m = (minpRaw[i]===null||isNaN(minpRaw[i])) ? cost[i] : +minpRaw[i];
+    return Math.max(cost[i], m);
   });
-  if(cost.some(v=>isNaN(v))) throw new Error("请填写每行成本或设置统一成本");
 
-  const minp=rows.map(r=>{
-    const m=r["最低系数2单价"]; return (m!==null && !isNaN(+m))?+m:+globalMinP;
-  });
-
-  // 构建模型（用 javascript-lp-solver；你不需要理解它）
+  // 模型
   const model={optimize:"obj",opType:"max",constraints:{},variables:{}};
+  // 清单口径允许差额
+  const base = listQty.reduce((s,q,i)=>s+q*uprice[i],0);
+  model.constraints["rep_up"]={max:base + (+tol||0)};
+  model.constraints["rep_lo"]={max:(+tol||0) - base};
 
-  // 清单口径的总价基准
-  const reportedBase=listQty.reduce((s,q,i)=>s+q*uprice[i],0);
-  model.constraints["rep_up"]={max:reportedBase+tol};
-  model.constraints["rep_lo"]={max:tol-reportedBase};
+  // 单价不降 & 上限（百分比×下一档统一价）
+  for(let i=1;i<n;i++) model.constraints[`mono_${i}`]={max:0};
+  for(let i=0;i<n-1;i++) model.constraints[`cap_${i}`]={max: (+capPct/100)*uprice[i+1] };
 
-  for(let i=1;i<n;i++) model.constraints[`mono_${i}`]={max:0};           // 不降价
-  for(let i=0;i<n-1;i++) model.constraints[`cap_${i}`]={max:uprice[i+1]}; // 不高于下一档统一价
-  for(let i=0;i<n;i++) model.constraints[`floor_${i}`]={max:-minp[i]};    // 不低于最低价
-  if(enforceCost){for(let i=0;i<n;i++) model.constraints[`cost_${i}`]={max:-cost[i]};}
+  // 下限：-p_i <= -floor_i
+  for(let i=0;i<n;i++) model.constraints[`floor_${i}`]={max:-floor[i]};
 
+  // 变量（目标用图纸量）
   for(let i=0;i<n;i++){
-    const name=`p_${i}`; const v={obj:drawQty[i]}; // 目标系数：图纸量
+    const name=`p_${i}`; const v={obj:drawQty[i]};
     v["rep_up"]=listQty[i]; v["rep_lo"]=-listQty[i];
     if(i<n-1) v[`cap_${i}`]=1;
     v[`floor_${i}`]=-1;
-    if(enforceCost) v[`cost_${i}`]=-1;
     model.variables[name]=v;
   }
-  for(let i=1;i<n;i++){const prev=`p_${i-1}`; model.variables[prev][`mono_${i}`]=(model.variables[prev][`mono_${i}`]||0)+1; model.variables[`p_${i}`][`mono_${i}`]=(model.variables[`p_${i}`][`mono_${i}`]||0)-1;}
+  // 单调：p_{i-1} - p_i <= 0
+  for(let i=1;i<n;i++){
+    const prev=`p_${i-1}`, cur=`p_${i}`;
+    model.variables[prev][`mono_${i}`]=(model.variables[prev][`mono_${i}`]||0)+1;
+    model.variables[cur][`mono_${i}`]=(model.variables[cur][`mono_${i}`]||0)-1;
+  }
 
   const res=solver.Solve(model);
-  if(!res.feasible) throw new Error("当前参数组合下无法计算，请放宽“允许差额”或下限/成本");
+  if(!res.feasible) throw new Error("当前规则下无法计算，请适当调大“允许差额”或“上限百分比”");
 
   const p=Array.from({length:n},(_,i)=>res[`p_${i}`]);
 
-  // 输出表 & 合计
+  // 输出表与合计
   const out=rows.map((r,i)=>{
     const lq=listQty[i], jq=drawQty[i], up=uprice[i], c=cost[i], pi=p[i];
     return {
       "项目名称": r["项目名称"],
-      "计量单位": r["计量单位"]||"m",
       "清单数量": lq,
       "图纸数量": jq,
       "统一系数单价": up,
@@ -266,6 +239,7 @@ function buildAndSolve(rows, tol, globalMinP, globalCost, enforceCost){
   const sumB = out.reduce((s,r)=>s+r["清单量*系数2单价"],0);
   const sumC = out.reduce((s,r)=>s+r["图纸量*成本"],0);
   const sumD = out.reduce((s,r)=>s+r["图纸量*系数2单价"],0);
+
   return {out,sumA,sumB,sumC,sumD};
 }
 
@@ -274,13 +248,13 @@ function renderOutTable(rows){
   const tbl=document.getElementById("outTable");
   tbl.innerHTML="";
   if(!rows||!rows.length){tbl.innerHTML="<tr><td class='muted'>暂无结果</td></tr>";return;}
-  const headers=["项目名称","计量单位","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
+  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
   const thead=document.createElement("thead"); const trh=document.createElement("tr");
   headers.forEach(h=>{const th=document.createElement("th"); th.textContent=h; trh.appendChild(th);}); thead.appendChild(trh); tbl.appendChild(thead);
   const tbody=document.createElement("tbody");
   rows.forEach(r=>{
     const tr=document.createElement("tr");
-    headers.forEach(h=>{const td=document.createElement("td"); const v=r[h]; td.textContent=(typeof v==="number")?toFixed2(v):v; tr.appendChild(td);});
+    headers.forEach(h=>{const td=document.createElement("td"); const v=r[h]; td.textContent=(typeof v==="number")?to2(v):v; tr.appendChild(td);});
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
@@ -289,44 +263,39 @@ function renderOutTable(rows){
 // 计算按钮
 document.getElementById("btnSolve").onclick=()=>{
   try{
-    const rows=getRowsFromTable();
+    const rows=getRows();
     if(!rows.length){alert("请先录入或导入数据");return;}
     const tol=+document.getElementById("tol").value||0;
-    const globalCost=+document.getElementById("globalCost").value||0;
-    const globalMinP=+document.getElementById("globalMinP").value||0;
-    const enforceCost=document.getElementById("enforceCost").checked;
+    const capPct=+document.getElementById("capPct").value||100;
 
-    const {out,sumA,sumB,sumC,sumD}=buildAndSolve(rows,tol,globalMinP,globalCost,enforceCost);
+    const {out,sumA,sumB,sumC,sumD}=buildAndSolve(rows,tol,capPct);
 
-    // 展示合计
-    document.getElementById("sumA").textContent=toFixed2(sumA);
-    document.getElementById("sumB").textContent=toFixed2(sumB);
-    document.getElementById("sumC").textContent=toFixed2(sumC);
-    document.getElementById("sumD").textContent=toFixed2(sumD);
-    document.getElementById("diffAB").textContent=toFixed2(sumB - sumA);
-    document.getElementById("profit").textContent=toFixed2(sumD - sumC);
+    document.getElementById("sumA").textContent=to2(sumA);
+    document.getElementById("sumB").textContent=to2(sumB);
+    document.getElementById("sumC").textContent=to2(sumC);
+    document.getElementById("sumD").textContent=to2(sumD);
+    document.getElementById("diffAB").textContent=to2(sumB - sumA);
+    document.getElementById("profit").textContent=to2(sumD - sumC);
     document.getElementById("summaryCards").style.display="";
     document.getElementById("summaryCards2").style.display="";
+    document.getElementById("hint").textContent="计算完成";
 
-    // 结果表
     renderOutTable(out);
-    window._outRows = out; // 供下载
-    document.getElementById("btnDownload").disabled=false;
-    document.getElementById("hint").textContent="已完成计算";
+    window._outRows=out; document.getElementById("btnDownload").disabled=false;
   }catch(e){
     document.getElementById("hint").textContent=e.message||"计算失败";
     alert(e.message||e);
   }
 };
 
-// 下载结果 CSV
+// 下载 CSV
 document.getElementById("btnDownload").onclick=()=>{
   const rows=window._outRows||[]; if(!rows.length)return;
-  const headers=["项目名称","计量单位","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
+  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
   const csv=[headers.join(",")].concat(rows.map(r=>headers.map(h=>r[h]??"").join(","))).join("\n");
   const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"});
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
-  a.href=url; a.download="优化明细.csv"; a.click(); URL.revokeObjectURL(url);
+  a.href=url; a.download="报价结果.csv"; a.click(); URL.revokeObjectURL(url);
 };
 </script>
 
