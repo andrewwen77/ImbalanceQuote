@@ -18,20 +18,26 @@
   .sheet{overflow:auto;border:1px solid #e5e7eb;border-radius:.5rem;padding:.5rem}
   table{border-collapse:separate;border-spacing:0;table-layout:auto;min-width:1000px}
   th,td{white-space:nowrap;padding:.4rem .6rem}
-  table input{width:160px;max-width:none}
+  td.col-name, th.col-name {white-space: normal;}
+  table input[type="number"]{width:140px; text-align:right;}
+  table input[type="text"]{width:100%; min-width:360px;}
   .w-sm{width:140px}
   .chip{background:#eef;padding:.2rem .5rem;border-radius:.6rem;font-size:.85rem}
+  #outTable td:first-child, #outTable th:first-child{white-space: normal; min-width: 360px;}
 </style>
 </head>
 <body>
 
 <main>
-  <h2>管材报价助手</h2>
+  <h2>不平衡报价助手</h2>
   <p class="muted">
-    <span class="chip">报价偏差 = 清单量×报价 − 清单量×统一价</span><br>
-    <span class="chip">真实利润 = 图纸量×报价 − 图纸量×成本价</span><br>
-    同零件大口径单价不低于小口径<br>
-    某口径报价不高于下一档口径统一价乘以自定义百分比。<br>
+    报价偏差 = 清单量×报价 − 清单量×统一价<br>
+    真实利润 = 图纸量×报价 − 图纸量×成本价<br>
+    算法约束：<br>
+    1. 在报价偏差不大于给定值前提下，追求利润最大化。<br>
+    2. 大口径单价不低于小口径。<br>
+    3. 某口径报价不高于下一档口径统一价乘以自定义百分比，比如自定义百分比为20%，则DN1000管建议报价不高于DN1200管的统一价乘120%。<br>
+    4. 建议报价不低于成本价和最低报价中的较大值。<br>
   </p>
 
   <!-- 参数与上传 -->
@@ -39,19 +45,21 @@
     <div>
       <h4>① 上传数据</h4>
       <input type="file" id="file" accept=".csv" aria-label="上传数据"/>
-      <small class="muted">CSV 至少包含：项目名称、清单数量、图纸数量、统一系数单价、成本单价；可选：最低系数2单价。</small>
+      <small class="muted">
+        表格必须包含：项目名称、清单数量、图纸数量、统一系数单价、成本价<br>
+        可选列：最低报价
+      </small>
     </div>
     <div>
       <h4>② 规则设置</h4>
       <div class="grid-3">
-        <label>与甲方清单口径允许的总差额（元）
+        <label>报价允许差额（元）
           <input id="tol" type="number" value="1000" min="0" step="100" class="w-sm">
         </label>
-        <label>下一档统一价上限（%）
+        <label>超下档百分比（%）
           <input id="capPct" type="number" value="100" min="1" max="1000" step="1" class="w-sm">
         </label>
       </div>
-      <small class="muted">说明：成本不能为空；若“最低系数2单价”未填，默认按成本执行下限；最终下限取<span class="chip">max(成本, 最低报价)</span>。</small>
     </div>
   </section>
 
@@ -71,7 +79,7 @@
           <th>图纸数量</th>
           <th>统一系数单价</th>
           <th>成本单价</th>
-          <th>最低系数2单价</th>
+          <th>最低报价</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -85,7 +93,7 @@
   <div id="summaryCards" class="grid-3" style="display:none">
     <article><header>清单×统一价 合计</header><strong id="sumA">-</strong></article>
     <article><header>清单×报价 合计</header><strong id="sumB">-</strong></article>
-    <article><header>图纸×成本 合计</header><strong id="sumC">-</strong></article>
+    <article><header>图纸×成本单价 合计</header><strong id="sumC">-</strong></article>
   </div>
   <div id="summaryCards2" class="grid-3" style="display:none;margin-top:.75rem">
     <article><header>图纸×报价 合计</header><strong id="sumD">-</strong></article>
@@ -116,7 +124,7 @@ function to2(x){return (Math.round(x*100)/100).toFixed(2);}
 // ===== 录入区 =====
 const tbody=document.getElementById("tbody");
 function rowToTr(r={}){
-  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"];
+  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低报价"];
   const tr=document.createElement("tr");
   cols.forEach(c=>{
     const td=document.createElement("td");
@@ -139,7 +147,7 @@ function getRows(){
       "图纸数量": num(t[2].value),
       "统一系数单价": num(t[3].value),
       "成本单价": num(t[4].value),
-      "最低系数2单价": num(t[5].value)
+      "最低报价": num(t[5].value)
     };
     if(row["项目名称"]) rows.push(row);
   });
@@ -158,7 +166,7 @@ document.getElementById("file").addEventListener("change",e=>{
       "图纸数量": num(r["图纸数量"]),
       "统一系数单价": num(r["统一系数单价"]),
       "成本单价": num(r["成本单价"]),
-      "最低系数2单价": num(r["最低系数2单价"])
+      "最低报价": num(r["最低报价"])
     }));
     loadRows(fixed);
     document.getElementById("hint").textContent="已导入：可直接在表内继续编辑";
@@ -177,7 +185,7 @@ function buildAndSolve(rows, tol, capPct){
   const drawQty = rows.map(r=>+r["图纸数量"]    ||0);
   const uprice  = rows.map(r=>+r["统一系数单价"]||0);
   const cost    = rows.map(r=>+r["成本单价"]);
-  const minpRaw = rows.map(r=>r["最低系数2单价"]);
+  const minpRaw = rows.map(r=>r["最低报价"]);
 
   // 最终下限：max(成本, 最低报价(若空则视为成本))
   const floor = rows.map((_,i)=>{
@@ -215,7 +223,7 @@ function buildAndSolve(rows, tol, capPct){
   }
 
   const res=solver.Solve(model);
-  if(!res.feasible) throw new Error("当前规则下无法计算，请适当调大“允许差额”或“上限百分比”");
+  if(!res.feasible) throw new Error("当前规则下无解，请适当调大“允许差额”或“上限百分比”");
 
   const p=Array.from({length:n},(_,i)=>res[`p_${i}`]);
 
@@ -228,17 +236,17 @@ function buildAndSolve(rows, tol, capPct){
       "图纸数量": jq,
       "统一系数单价": up,
       "清单量*统一系数单价": lq*up,
-      "系数2单价": pi,
+      "建议报价": pi,
       "图纸量*成本": jq*c,
-      "图纸量*系数2单价": jq*pi,
-      "清单量*系数2单价": lq*pi
+      "图纸量*建议报价": jq*pi,
+      "清单量*建议报价": lq*pi
     };
   });
 
   const sumA = out.reduce((s,r)=>s+r["清单量*统一系数单价"],0);
-  const sumB = out.reduce((s,r)=>s+r["清单量*系数2单价"],0);
+  const sumB = out.reduce((s,r)=>s+r["清单量*建议报价"],0);
   const sumC = out.reduce((s,r)=>s+r["图纸量*成本"],0);
-  const sumD = out.reduce((s,r)=>s+r["图纸量*系数2单价"],0);
+  const sumD = out.reduce((s,r)=>s+r["图纸量*建议报价"],0);
 
   return {out,sumA,sumB,sumC,sumD};
 }
@@ -248,7 +256,7 @@ function renderOutTable(rows){
   const tbl=document.getElementById("outTable");
   tbl.innerHTML="";
   if(!rows||!rows.length){tbl.innerHTML="<tr><td class='muted'>暂无结果</td></tr>";return;}
-  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
+  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本","图纸量*建议报价","清单量*建议报价"];
   const thead=document.createElement("thead"); const trh=document.createElement("tr");
   headers.forEach(h=>{const th=document.createElement("th"); th.textContent=h; trh.appendChild(th);}); thead.appendChild(trh); tbl.appendChild(thead);
   const tbody=document.createElement("tbody");
@@ -291,7 +299,7 @@ document.getElementById("btnSolve").onclick=()=>{
 // 下载 CSV
 document.getElementById("btnDownload").onclick=()=>{
   const rows=window._outRows||[]; if(!rows.length)return;
-  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","系数2单价","图纸量*成本","图纸量*系数2单价","清单量*系数2单价"];
+  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本单价","图纸量*建议报价","清单量*建议报价"];
   const csv=[headers.join(",")].concat(rows.map(r=>headers.map(h=>r[h]??"").join(","))).join("\n");
   const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"});
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
@@ -301,4 +309,5 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
