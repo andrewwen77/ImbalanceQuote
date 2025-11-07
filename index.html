@@ -365,7 +365,9 @@ document.getElementById("btnSolve").onclick=()=>{
     document.getElementById("hint").textContent="计算完成";
 
     renderOutTable(out);
-    window._outRows=out; document.getElementById("btnDownload").disabled=false;
+    window._outRows = out; 
+    window._outRowsBase = out.map(r => ({ ...r }));  // ✅ 保存基线
+    document.getElementById("btnDownload").disabled = false;
     document.getElementById("btnJitter").disabled = false;
   }catch(e){
     document.getElementById("hint").textContent=e.message||"计算失败";
@@ -385,11 +387,15 @@ document.getElementById("btnDownload").onclick=()=>{
 
 // ✅ 改动小数点：对“系数2单价”加随机[-0.5, +0.5]，保留两位小数；随后就地重算汇总与表格
 function jitterPrices() {
-  if (!window._outRows || !window._outRows.length) {
-    alert("请先完成一次计算");
+  // 必须先有基线
+  if (!window._outRowsBase || !window._outRowsBase.length) {
+    alert("请先点击【开始计算】得到一份基线结果");
     return;
   }
-  const rows = window._outRows.map(r => ({ ...r }));
+
+  // 每次从“基线”复制一份开始抖动
+  const base = window._outRowsBase;
+  const rows = base.map(r => ({ ...r }));
 
   // 抖动幅度：±min(0.5, 价格的 2%)，两位小数
   function jitterFor(p) {
@@ -398,75 +404,66 @@ function jitterPrices() {
     return Math.round((p + delta) * 100) / 100;
   }
 
-  // 先做逐行随机抖动
+  // 逐行抖动“建议报价”，并重算依赖列
   rows.forEach(r => {
     const oldP = +r["建议报价"] || 0;
     const jq   = +r["图纸数量"] || 0;
     const lq   = +r["清单数量"] || 0;
-
     const newP = jitterFor(oldP);
-    r["建议报价"]        = newP;
-    r["图纸量*建议报价"] = jq * newP;
-    r["清单量*建议报价"] = lq * newP;
+    r["建议报价"]         = newP;
+    r["图纸量*建议报价"]  = jq * newP;
+    r["清单量*建议报价"]  = lq * newP;
+    // 其他列（统一价、成本）不变
   });
 
-  // ====== 关键新增：把偏差拉回 [0, 2*tol] 区间 ======
-  const tol  = +document.getElementById("tol").value || 0;
+  // 计算本次抖动后的合计与偏差
   const sumA = rows.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
-  const sumB0 = rows.reduce((s,r)=>s + (+r["清单量*建议报价"]||0), 0);
-  const L = rows.reduce((s,r)=>s + (+r["清单数量"]||0), 0);   // ∑清单量
+  const sumB = rows.reduce((s,r)=>s + (+r["清单量*建议报价"]||0),   0);
+  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0); // ✅ 字段名修正
+  const sumD = rows.reduce((s,r)=>s + (+r["图纸量*建议报价"]||0),     0);
 
-  // 只有有清单量时才可整体平移
-  if (L > 0) {
-    const lower = 0;
-    const upper = 2 * tol;
-    let diff = sumB0 - sumA;   // 当前报价偏差
+  const tol = +document.getElementById("tol").value || 0;
+  const diff = sumB - sumA;
+  const lower = 0, upper = 2 * tol;
 
-    let needShift = 0;         // 需要整体平移的 Δ（元/米）
-    if (diff < lower) {
-      needShift = (lower - diff) / L;     // 往上平移
-    } else if (diff > upper) {
-      needShift = (upper - diff) / L;     // 往下平移（负数）
-    }
-
-    if (needShift !== 0) {
-      // 应用整体平移，并保留两位小数后重算
-      rows.forEach(r => {
-        const jq = +r["图纸数量"] || 0;
-        const lq = +r["清单数量"] || 0;
-        let p = +r["建议报价"] || 0;
-        p = Math.round((p + needShift) * 100) / 100;   // 两位小数
-        if (p < 0) p = 0; // 可选：防止出现负单价
-        r["建议报价"]        = p;
-        r["图纸量*建议报价"] = jq * p;
-        r["清单量*建议报价"] = lq * p;
-      });
-    }
+  // 若偏差越界，则不采用这次抖动，恢复基线显示
+  if (diff < lower || diff > upper) {
+    renderOutTable(base);
+    window._outRows = base.map(r => ({ ...r }));
+    // 基线合计
+    const bA = base.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
+    const bB = base.reduce((s,r)=>s + (+r["清单量*建议报价"]||0),   0);
+    const bC = base.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0);
+    const bD = base.reduce((s,r)=>s + (+r["图纸量*建议报价"]||0),     0);
+    document.getElementById("sumA").textContent = to2(bA);
+    document.getElementById("sumB").textContent = to2(bB);
+    document.getElementById("sumC").textContent = to2(bC);
+    document.getElementById("sumD").textContent = to2(bD);
+    document.getElementById("diffAB").textContent = to2(bB - bA);
+    document.getElementById("profit").textContent = to2(bD - bC);
+    document.getElementById("hint").textContent = "本次随机未采用（偏差越界），已保留原优化结果";
+    return;
   }
-  // ====== 关键新增结束 ======
 
-  // 最终汇总（仅展示，不再回到约束求解）
-  const sumA2 = rows.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
-  const sumB2 = rows.reduce((s,r)=>s + (+r["清单量*建议报价"]||0), 0);
-  const sumC2 = rows.reduce((s,r)=>s + (+r["图纸量*成本"]||0),     0);
-  const sumD2 = rows.reduce((s,r)=>s + (+r["图纸量*建议报价"]||0), 0);
-
-  document.getElementById("sumA").textContent = to2(sumA2);
-  document.getElementById("sumB").textContent = to2(sumB2);
-  document.getElementById("sumC").textContent = to2(sumC2);
-  document.getElementById("sumD").textContent = to2(sumD2);
-  document.getElementById("diffAB").textContent = to2(sumB2 - sumA2); // 报价偏差（∈[0, 2*tol]）
-  document.getElementById("profit").textContent = to2(sumD2 - sumC2); // 真实利润
+  // 偏差在 [0, 2*tol] 内：采用并刷新显示，但不改变“基线”
+  document.getElementById("sumA").textContent = to2(sumA);
+  document.getElementById("sumB").textContent = to2(sumB);
+  document.getElementById("sumC").textContent = to2(sumC);
+  document.getElementById("sumD").textContent = to2(sumD);
+  document.getElementById("diffAB").textContent = to2(diff);
+  document.getElementById("profit").textContent = to2(sumD - sumC);
 
   renderOutTable(rows);
-  window._outRows = rows;
-  document.getElementById("hint").textContent = "已随机微调报价小数位（已自动调整到允许偏差区间内）";
+  window._outRows = rows; // 仅当前显示用，下载用
+  document.getElementById("hint").textContent = "已随机微调报价小数位（偏差在可接受范围内）";
 }
+
 document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 </script>
 
 </body>
 </html>
+
 
 
 
