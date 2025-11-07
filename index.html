@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>管材报价助手（工程版）</title>
+<title>不平衡报价助手</title>
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -28,10 +28,10 @@
 <main>
   <h2>管材报价助手</h2>
   <p class="muted">
-    按工程口径计算报价与利润。<br>
-    口径：<span class="chip">报价偏差 = 清单×报价 − 清单×统一价</span>，
-    <span class="chip">真实利润 = 图纸×报价 − 图纸×成本</span>。<br>
-    系统自动保证：同系列口径越大，单价不低于小口径；某口径报价不高于“下一档统一价×上限百分比”。
+    <span class="chip">报价偏差 = 清单量×报价 − 清单量×统一价</span><br>
+    <span class="chip">真实利润 = 图纸量×报价 − 图纸量×成本价</span><br>
+    同零件大口径单价不低于小口径<br>
+    某口径报价不高于下一档口径统一价乘以自定义百分比。<br>
   </p>
 
   <!-- 参数与上传 -->
@@ -301,3 +301,4 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
