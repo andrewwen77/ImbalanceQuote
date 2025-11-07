@@ -115,6 +115,8 @@
     <table id="outTable"></table>
   </div>
 
+  <button id="btnJitter" class="secondary" style="margin-top:.5rem" disabled>改动小数点</button>
+
   <button id="btnDownload" class="secondary" style="margin-top:1rem" disabled>下载结果 CSV</button>
 </main>
 
@@ -364,6 +366,7 @@ document.getElementById("btnSolve").onclick=()=>{
 
     renderOutTable(out);
     window._outRows=out; document.getElementById("btnDownload").disabled=false;
+    document.getElementById("btnJitter").disabled = false;
   }catch(e){
     document.getElementById("hint").textContent=e.message||"计算失败";
     alert(e.message||e);
@@ -379,10 +382,63 @@ document.getElementById("btnDownload").onclick=()=>{
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
   a.href=url; a.download="报价结果.csv"; a.click(); URL.revokeObjectURL(url);
 };
+
+// ✅ 改动小数点：对“系数2单价”加随机[-0.5, +0.5]，保留两位小数；随后就地重算汇总与表格
+function jitterPrices() {
+  if (!window._outRows || !window._outRows.length) {
+    alert("请先完成一次计算");
+    return;
+  }
+  // 复制一份数据避免直接修改引用（也可以原地改）
+  const rows = window._outRows.map(r => ({ ...r }));
+
+  // 随机扰动：两位小数、范围 [-0.5, +0.5]
+  function randDelta() {
+    // 取 [-0.5, 0.5]，两位小数
+    return Math.round((Math.random() - 0.5) * 100) / 100;
+  }
+
+  // 对“系数2单价”做扰动并重算两列
+  rows.forEach(r => {
+    const oldP = +r["系数2单价"] || 0;
+    const jq   = +r["图纸数量"]   || 0;
+    const lq   = +r["清单数量"]   || 0;
+
+    const newP = Math.round((oldP + randDelta()) * 100) / 100;  // 保留两位
+    r["系数2单价"]        = newP;
+    r["图纸量*系数2单价"] = jq * newP;
+    r["清单量*系数2单价"] = lq * newP;
+  });
+
+  // 重新汇总（注意：此步不再校验或回到约束，仅做显示）
+  const sumA = rows.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
+  const sumB = rows.reduce((s,r)=>s + (+r["清单量*系数2单价"]||0), 0);
+  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本"]||0),     0);
+  const sumD = rows.reduce((s,r)=>s + (+r["图纸量*系数2单价"]||0), 0);
+
+  // 更新摘要卡片
+  document.getElementById("sumA").textContent = to2(sumA);
+  document.getElementById("sumB").textContent = to2(sumB);
+  document.getElementById("sumC").textContent = to2(sumC);
+  document.getElementById("sumD").textContent = to2(sumD);
+  document.getElementById("diffAB").textContent = to2(sumB - sumA); // 报价偏差
+  document.getElementById("profit").textContent = to2(sumD - sumC); // 真实利润
+
+  // 重绘结果表
+  renderOutTable(rows);
+
+  // 覆盖全局结果，便于后续下载 CSV
+  window._outRows = rows;
+
+  // 提示
+  document.getElementById("hint").textContent = "已随机微调报价小数点";
+}
+document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 </script>
 
 </body>
 </html>
+
 
 
 
