@@ -124,18 +124,22 @@ function to2(x){return (Math.round(x*100)/100).toFixed(2);}
 // ===== 录入区 =====
 const tbody=document.getElementById("tbody");
 function rowToTr(r={}){
-  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低报价"];
+  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"];
   const tr=document.createElement("tr");
   cols.forEach(c=>{
     const td=document.createElement("td");
+    if (c === "项目名称") td.classList.add("col-name");     // ✅ 给名称列加标记
+    
     const inp=document.createElement("input");
     inp.type=(c==="项目名称"?"text":"number");
-    if(inp.type==="number"){inp.step="0.01";inp.className="w-sm";}
+    if (c === "项目名称") inp.classList.add("name-input");  // ✅ 可选：给名称输入框加类
+    if (inp.type==="number"){inp.step="0.01";}
     inp.value=(r[c]??"");
     td.appendChild(inp); tr.appendChild(td);
   });
   return tr;
 }
+
 function loadRows(rows){tbody.innerHTML=""; sortByDN(rows).forEach(r=>tbody.appendChild(rowToTr(r)));}
 function getRows(){
   const rows=[];
@@ -257,12 +261,27 @@ function renderOutTable(rows){
   tbl.innerHTML="";
   if(!rows||!rows.length){tbl.innerHTML="<tr><td class='muted'>暂无结果</td></tr>";return;}
   const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本","图纸量*建议报价","清单量*建议报价"];
-  const thead=document.createElement("thead"); const trh=document.createElement("tr");
-  headers.forEach(h=>{const th=document.createElement("th"); th.textContent=h; trh.appendChild(th);}); thead.appendChild(trh); tbl.appendChild(thead);
+  const thead=document.createElement("thead"); 
+  const trh=document.createElement("tr");
+  headers.forEach((h,idx)=>{
+    const th=document.createElement("th");
+    th.textContent=h;
+    if (idx===0) th.classList.add("col-name");   // ✅ 首列表头加类
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh); tbl.appendChild(thead);
+  
+  // 行数据
   const tbody=document.createElement("tbody");
   rows.forEach(r=>{
     const tr=document.createElement("tr");
-    headers.forEach(h=>{const td=document.createElement("td"); const v=r[h]; td.textContent=(typeof v==="number")?to2(v):v; tr.appendChild(td);});
+    headers.forEach((h,idx)=>{
+      const td=document.createElement("td");
+      if (idx===0) td.classList.add("col-name"); // ✅ 首列单元格加类
+      const v=r[h];
+      td.textContent=(typeof v==="number")?to2(v):v;
+      tr.appendChild(td);
+    });
     tbody.appendChild(tr);
   });
   tbl.appendChild(tbody);
@@ -309,5 +328,6 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
 
