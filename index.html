@@ -152,7 +152,7 @@ function to2(x){return (Math.round(x*100)/100).toFixed(2);}
 // ===== 录入区 =====
 const tbody=document.getElementById("tbody");
 function rowToTr(r={}){
-  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低系数2单价"];
+  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低报价"];
   const tr=document.createElement("tr");
   cols.forEach(c=>{
     const td=document.createElement("td");
@@ -201,7 +201,7 @@ document.getElementById("file").addEventListener("change", e=>{
     "图纸数量": num(r["图纸数量"]),
     "统一系数单价": num(r["统一系数单价"]),
     "成本单价": num(r["成本单价"]),
-    "最低系数2单价": num(r["最低系数2单价"] ?? r["最低报价"])
+    "最低报价": num(r["最低报价"])
   }));
 
   // ✅ 新增：只保留“项目名称”非空的行
@@ -298,7 +298,7 @@ function buildAndSolve(rows, tol, capPct){
       "统一系数单价": up,
       "清单量*统一系数单价": lq*up,
       "建议报价": pi,
-      "图纸量*成本": jq*c,
+      "图纸量*成本单价": jq*c,
       "图纸量*建议报价": jq*pi,
       "清单量*建议报价": lq*pi
     };
@@ -306,7 +306,7 @@ function buildAndSolve(rows, tol, capPct){
 
   const sumA = out.reduce((s,r)=>s+r["清单量*统一系数单价"],0);
   const sumB = out.reduce((s,r)=>s+r["清单量*建议报价"],0);
-  const sumC = out.reduce((s,r)=>s+r["图纸量*成本"],0);
+  const sumC = out.reduce((s,r)=>s+r["图纸量*成本单价"],0);
   const sumD = out.reduce((s,r)=>s+r["图纸量*建议报价"],0);
 
   return {out,sumA,sumB,sumC,sumD};
@@ -317,7 +317,7 @@ function renderOutTable(rows){
   const tbl=document.getElementById("outTable");
   tbl.innerHTML="";
   if(!rows||!rows.length){tbl.innerHTML="<tr><td class='muted'>暂无结果</td></tr>";return;}
-  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本","图纸量*建议报价","清单量*建议报价"];
+  const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本单价","图纸量*建议报价","清单量*建议报价"];
   const thead=document.createElement("thead"); 
   const trh=document.createElement("tr");
   headers.forEach((h,idx)=>{
@@ -389,55 +389,50 @@ function jitterPrices() {
     alert("请先完成一次计算");
     return;
   }
-  // 复制一份数据避免直接修改引用（也可以原地改）
   const rows = window._outRows.map(r => ({ ...r }));
 
-  // 随机扰动：两位小数、范围 [-0.5, +0.5]
-  function randDelta() {
-    // 取 [-0.5, 0.5]，两位小数
-    return Math.round((Math.random() - 0.5) * 100) / 100;
+  // 抖动幅度：±min(0.5, 价格的 2%)，两位小数
+  function jitterFor(p) {
+    const maxStep = Math.min(0.5, Math.max(0.01, Math.abs(p) * 0.02));
+    const delta = (Math.random() * 2 - 1) * maxStep;
+    return Math.round((p + delta) * 100) / 100;
   }
 
-  // 对“系数2单价”做扰动并重算两列
   rows.forEach(r => {
-    const oldP = +r["系数2单价"] || 0;
-    const jq   = +r["图纸数量"]   || 0;
-    const lq   = +r["清单数量"]   || 0;
+    const oldP = +r["建议报价"] || 0;
+    const jq   = +r["图纸数量"] || 0;
+    const lq   = +r["清单数量"] || 0;
 
-    const newP = Math.round((oldP + randDelta()) * 100) / 100;  // 保留两位
-    r["系数2单价"]        = newP;
-    r["图纸量*系数2单价"] = jq * newP;
-    r["清单量*系数2单价"] = lq * newP;
+    const newP = jitterFor(oldP);
+    r["建议报价"]        = newP;
+    r["图纸量*建议报价"] = jq * newP;
+    r["清单量*建议报价"] = lq * newP;
   });
 
-  // 重新汇总（注意：此步不再校验或回到约束，仅做显示）
+  // 重新汇总（这里只做展示，不再回到约束校验）
   const sumA = rows.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
-  const sumB = rows.reduce((s,r)=>s + (+r["清单量*系数2单价"]||0), 0);
-  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本"]||0),     0);
-  const sumD = rows.reduce((s,r)=>s + (+r["图纸量*系数2单价"]||0), 0);
+  const sumB = rows.reduce((s,r)=>s + (+r["清单量*建议报价"]||0), 0);
+  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0);
+  const sumD = rows.reduce((s,r)=>s + (+r["图纸量*建议报价"]||0), 0);
 
-  // 更新摘要卡片
   document.getElementById("sumA").textContent = to2(sumA);
   document.getElementById("sumB").textContent = to2(sumB);
   document.getElementById("sumC").textContent = to2(sumC);
   document.getElementById("sumD").textContent = to2(sumD);
-  document.getElementById("diffAB").textContent = to2(sumB - sumA); // 报价偏差
-  document.getElementById("profit").textContent = to2(sumD - sumC); // 真实利润
+  document.getElementById("diffAB").textContent = to2(sumB - sumA);
+  document.getElementById("profit").textContent = to2(sumD - sumC);
 
-  // 重绘结果表
   renderOutTable(rows);
-
-  // 覆盖全局结果，便于后续下载 CSV
   window._outRows = rows;
-
-  // 提示
-  document.getElementById("hint").textContent = "已随机微调报价小数点";
+  document.getElementById("hint").textContent = "已随机微调报价小数位";
 }
+
 document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 </script>
 
 </body>
 </html>
+
 
 
 
