@@ -39,7 +39,7 @@
     1. 在报价偏差不大于给定值前提下，追求利润最大化。<br>
     2. 大口径单价不低于小口径。<br>
     3. 某口径报价不高于【下一档口径统一价乘以自定义百分比】，比如自定义百分比为120%，则DN1000管建议报价不高于DN1200管的统一价乘120%。<br>
-    4. 建议报价不低于成本单价和最低报价中的较大值。<br>
+    4. 建议报价不低于成本单价和最低报价中的较大值，不高于统一系数单价的两倍。<br>
   </p>
 
 <!-- 参数与上传 -->
@@ -256,6 +256,11 @@ function buildAndSolve(rows, tol, capPct){
   // 单价不降 & 上限（百分比×下一档统一价）
   for(let i=1;i<n;i++) model.constraints[`mono_${i}`]={max:0};
   for(let i=0;i<n-1;i++) model.constraints[`cap_${i}`]={max: (+capPct/100)*uprice[i+1] };
+  // ✅ 新增：报价不得超过统一价的 2 倍
+  for(let i=0;i<n;i++) {
+    model.constraints[`cap2x_${i}`] = { max: 2 * uprice[i] };
+  }
+
 
   // 下限：-p_i <= -floor_i
   for(let i=0;i<n;i++) model.constraints[`floor_${i}`]={max:-floor[i]};
@@ -266,6 +271,7 @@ function buildAndSolve(rows, tol, capPct){
     v["rep_up"]=listQty[i]; v["rep_lo"]=-listQty[i];
     if(i<n-1) v[`cap_${i}`]=1;
     v[`floor_${i}`]=-1;
+    v[`cap2x_${i}`] = 1;
     model.variables[name]=v;
   }
   // 单调：p_{i-1} - p_i <= 0
@@ -377,6 +383,7 @@ document.getElementById("btnDownload").onclick=()=>{
 
 </body>
 </html>
+
 
 
 
