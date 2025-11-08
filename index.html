@@ -39,28 +39,54 @@
     white-space: nowrap;
   }
   
-  /* 强制使用原生下拉样式，指定前景/背景颜色，保证文字显示 */
-  .series-select {
-    appearance: auto;              /* 关键：取消 Pico 的自定义外观 */
-    -webkit-appearance: menulist;
-    background-color: #fff;
-    color: #111 !important;        /* 文字颜色强制为深色 */
-    width: 84px;
-    min-width: 84px;
-    padding: .25rem .5rem;
-    line-height: 1.2;
-    text-align-last: center;       /* 选中项文字居中（Chrome/Edge） */
-  }
+  /* —— 让品类下拉用我们自己的样式，收起后必定可见 —— */
+  .series-select{
+    /* 彻底不用 Pico 的样式 */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
   
-  /* 选项本身也设定颜色，避免被主题覆盖为透明 */
-  .series-select option {
+    /* 可见性与颜色 */
+    opacity: 1 !important;
     color: #111 !important;
+    background-color: #fff !important;
+  
+    /* 自己的边框与尺寸 */
+    width: 90px;
+    min-width: 90px;
+    height: 2.1rem;
+    line-height: 2.1rem;
+    padding: 0 .75rem 0 .5rem;
+    border: 1px solid #cbd5e1;
+    border-radius: .375rem;
+    text-align: center;       /* 兼容性更好 */
+    text-align-last: center;  /* Chrome/Edge 居中 */
+  
+    /* 自绘下拉箭头（避免 Pico 的背景箭头把文字盖掉） */
+    background-image:
+      linear-gradient(45deg, transparent 50%, #666 50%),
+      linear-gradient(135deg, #666 50%, transparent 50%),
+      linear-gradient(to right, #ddd, #ddd);
+    background-position:
+      calc(100% - 14px) 50%,
+      calc(100% - 8px)  50%,
+      calc(100% - 2rem) 50%;
+    background-size: 6px 6px, 6px 6px, 1px 1.4rem;
+    background-repeat: no-repeat;
   }
   
-  /* 占位项可略微变灰显示 */
-  .series-select option[value=""] {
-    color: #6b7280 !important;
+  /* 选项文本也强制深色，防止主题覆盖 */
+  .series-select option{ color:#111 !important; }
+  .series-select option[value=""]{ color:#6b7280 !important; }
+  
+  /* 列宽 */
+  th.series-col, td.series-col{
+    width: 96px;
+    min-width: 96px;
+    text-align: center;
+    white-space: nowrap;
   }
+
 
 
 </style>
@@ -223,12 +249,12 @@ function rowToTr(r={}){
   td.appendChild(inp); tr.appendChild(td);
 
   // 品类（A-Z）
-    td=document.createElement("td");
-    td.classList.add("series-col");           // ✅ 单元格加类
-    const sel=seriesSelect(r["品类"]??"");
-    sel.classList.add("series-select");       // ✅ 下拉加类
-    td.appendChild(sel); 
-    tr.appendChild(td);
+  td = document.createElement("td");
+  td.classList.add("series-col");
+  const sel = seriesSelect(r["品类"] ?? "");
+  sel.classList.add("series-select");   // 这句必须在
+  td.appendChild(sel);
+  tr.appendChild(td);
 
   // 其余数字列
   const cols=["清单数量","图纸数量","统一系数单价","成本单价","最低报价","最高报价"];
@@ -582,6 +608,7 @@ document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 
 </body>
 </html>
+
 
 
 
