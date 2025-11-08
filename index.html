@@ -41,9 +41,9 @@
     真实利润 = 图纸量×建议报价 − 图纸量×成本单价<br>
     <br>
     规则摘要：<br>
-    1) 在“报价允许差额”内（相对清单×统一价）最大化真实利润；<br>
-    2) **仅对同一“系列”内**，按当前表格顺序（从上到下）设置：单价不下降；且本档报价 ≤ 下一档统一价 × 自定义百分比；<br>
-    3) 建议报价 ≥ max(成本单价, 最低报价)；≤ min(最高报价(如填), 统一价×2)。
+    1) 在报价允许差额内最大化真实利润；<br>
+    2) 同品类零部件中，按表格顺序（从上到下）设置：单价不下降；且本档建议报价 ≤ 下一档统一价 × 自定义百分比；比如自定义百分比为120%，则HDPE双壁波纹管品类中，DN1000管建议报价不高于DN1200管的统一价乘120%<br>
+    3) 建议报价不低于最低报价，不高于最高报价；若没有填写最低、最高报价，则不低于成本单价，不高于统一系数单价的两倍。
   </p>
 
 <!-- 参数与上传 -->
@@ -306,10 +306,9 @@ function buildAndSolve(rows, tol, capPct){
   const maxpRaw = rows.map(r=>r["最高报价"]);
   const series  = rows.map(r=> (r["系列"]||"").trim());
 
-  // 下限：max(成本, 最低报价(若空则视为成本))
   const floor = rows.map((_,i)=>{
-    const m = (minpRaw[i]===null||isNaN(minpRaw[i])) ? cost[i] : +minpRaw[i];
-    return Math.max(cost[i], m);
+    const hasMin = !(minpRaw[i]===null || isNaN(minpRaw[i]));
+    return hasMin ? (+minpRaw[i]) : cost[i];
   });
 
   const model={optimize:"obj",opType:"max",constraints:{},variables:{}};
@@ -319,22 +318,37 @@ function buildAndSolve(rows, tol, capPct){
   model.constraints["rep_up"]={max:base + (+tol||0)};
   model.constraints["rep_lo"]={max:(+tol||0) - base};
 
-  // 每行通用约束：下限、上限(2×统一)、最高报价(如填)
+  // 每行上下限按照“最低/最高优先”规则添加
   for(let i=0;i<n;i++){
-    model.constraints[`floor_${i}`]={max:-floor[i]}; // -p_i <= -floor_i
-    model.constraints[`cap2x_${i}`] = { max: 2 * uprice[i] };
-    if(maxpRaw[i] !== null && !isNaN(maxpRaw[i])){
+    const hasMin = !(minpRaw[i]===null || isNaN(minpRaw[i]));
+    const hasMax = !(maxpRaw[i]===null || isNaN(maxpRaw[i]));
+ 
+    // 下限始终存在：floor_i（见上方 floor 计算）
+    model.constraints[`floor_${i}`] = { max: -floor[i] }; // -p_i <= -floor_i
+
+    // 上限：
+    // 若同时有最低&最高 => 只用 capMax，不加 cap2x
+    // 若仅有最高 => capMax 与 cap2x 并存（取更紧的）
+    // 若无最高 => 仅 cap2x
+    if (hasMax) {
       model.constraints[`capMax_${i}`] = { max: +maxpRaw[i] };
     }
+    if (!(hasMin && hasMax)) {
+      // 仅在“不是(最低&最高都填)”时才引入 2×统一价上限
+      model.constraints[`cap2x_${i}`] = { max: 2 * uprice[i] };
+    }
   }
-
+ 
   // 变量
   for(let i=0;i<n;i++){
     const name=`p_${i}`; const v={obj:drawQty[i]};
-    v["rep_up"]=listQty[i]; v["rep_lo"]=-listQty[i];
-    v[`floor_${i}`]=-1;
-    v[`cap2x_${i}`] = 1;
-    if(maxpRaw[i] !== null && !isNaN(maxpRaw[i])) v[`capMax_${i}`]=1;
+    v["rep_up"]=listQty[i]; 
+    v["rep_lo"]=-listQty[i];
+    v[`floor_${i}`]=-1;          // 下限
+    const hasMin = !(minpRaw[i]===null || isNaN(minpRaw[i]));
+    const hasMax = !(maxpRaw[i]===null || isNaN(maxpRaw[i]));
+    if (hasMax) v[`capMax_${i}`] = 1;   // 最高价
+    if (!(hasMin && hasMax)) v[`cap2x_${i}`] = 1; // 2×统一（仅当没同时填高/低时）
     model.variables[name]=v;
   }
 
@@ -532,3 +546,4 @@ document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 
 </body>
 </html>
+
