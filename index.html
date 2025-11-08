@@ -30,6 +30,23 @@
   th.drag-col, td.drag-col { width: 36px; text-align:center; }
   .drag-handle { cursor: move; user-select: none; font-weight:700; }
   tr.drag-over { outline: 2px dashed #4f46e5; }
+
+  /* 系列列固定宽度，避免过窄导致选中值不显示 */
+  th.series-col, td.series-col { 
+    width: 90px;           /* 你也可以改成 100/110 看喜好 */
+    min-width: 90px;
+    text-align: center;
+    white-space: nowrap;
+  }
+  
+  /* 系列下拉本身的宽度与对齐 */
+  .series-select {
+    width: 76px;           /* 留点边距，正好容纳一个字母和下拉箭头 */
+    min-width: 76px;
+    text-align: center;
+    padding-right: 1.5rem; /* 预留箭头空间，不遮挡字母 */
+  }
+
 </style>
 </head>
 <body>
@@ -86,7 +103,7 @@
         <tr>
           <th class="drag-col">⇅</th>
           <th>项目名称</th>
-          <th>系列</th>
+          <th class="series-col">系列</th>
           <th>清单数量</th>
           <th>图纸数量</th>
           <th>统一系数单价</th>
@@ -190,9 +207,12 @@ function rowToTr(r={}){
   td.appendChild(inp); tr.appendChild(td);
 
   // 系列（A-Z）
-  td=document.createElement("td");
-  const sel=seriesSelect(r["系列"]??"");
-  td.appendChild(sel); tr.appendChild(td);
+    td=document.createElement("td");
+    td.classList.add("series-col");           // ✅ 单元格加类
+    const sel=seriesSelect(r["系列"]??"");
+    sel.classList.add("series-select");       // ✅ 下拉加类
+    td.appendChild(sel); 
+    tr.appendChild(td);
 
   // 其余数字列
   const cols=["清单数量","图纸数量","统一系数单价","成本单价","最低报价","最高报价"];
@@ -546,4 +566,5 @@ document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 
 </body>
 </html>
+
 
