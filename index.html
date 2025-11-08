@@ -17,7 +17,7 @@
   .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
   .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
   .sheet{overflow:auto;border:1px solid #e5e7eb;border-radius:.5rem;padding:.5rem}
-  table{border-collapse:separate;border-spacing:0;table-layout:auto;min-width:1000px}
+  table{border-collapse:separate;border-spacing:0;table-layout:auto;min-width:1100px}
   th,td{white-space:nowrap;padding:.4rem .6rem}
   td.col-name, th.col-name {white-space: normal;}
   table input[type="number"]{width:140px; text-align:right;}
@@ -25,6 +25,11 @@
   .w-sm{width:140px}
   .chip{background:#eef;padding:.2rem .5rem;border-radius:.6rem;font-size:.85rem}
   #outTable td:first-child, #outTable th:first-child{white-space: normal; min-width: 360px;}
+
+  /* 拖拽手柄与高亮 */
+  th.drag-col, td.drag-col { width: 36px; text-align:center; }
+  .drag-handle { cursor: move; user-select: none; font-weight:700; }
+  tr.drag-over { outline: 2px dashed #4f46e5; }
 </style>
 </head>
 <body>
@@ -35,11 +40,10 @@
     报价偏差 = 清单量×建议报价 − 清单量×统一价<br>
     真实利润 = 图纸量×建议报价 − 图纸量×成本单价<br>
     <br>
-    算法约束：<br>
-    1. 在报价偏差不大于给定值前提下，追求利润最大化。<br>
-    2. 大口径单价不低于小口径。<br>
-    3. 某口径报价不高于【下一档口径统一价乘以自定义百分比】，比如自定义百分比为120%，则DN1000管建议报价不高于DN1200管的统一价乘120%。<br>
-    4. 建议报价不低于成本单价和最低报价中的较大值，不高于统一系数单价的两倍。<br>
+    规则摘要：<br>
+    1) 在“报价允许差额”内（相对清单×统一价）最大化真实利润；<br>
+    2) **仅对同一“系列”内**，按当前表格顺序（从上到下）设置：单价不下降；且本档报价 ≤ 下一档统一价 × 自定义百分比；<br>
+    3) 建议报价 ≥ max(成本单价, 最低报价)；≤ min(最高报价(如填), 统一价×2)。
   </p>
 
 <!-- 参数与上传 -->
@@ -55,8 +59,8 @@
       aria-label="上传数据"
     />
     <small class="muted">
-      表头为：项目名称、清单数量、图纸数量、统一系数单价、成本单价、最低报价<br>
-      ！！注意：上传内容可以比这些少，传上来再补充，但是传上来的列名称要一致，不然识别不到！！
+      必需列：项目名称、清单数量、图纸数量、统一系数单价、成本单价<br>
+      可选列：最低报价、最高报价、系列（若无系列则不建立组内约束）
     </small>
   </div>
 
@@ -66,25 +70,29 @@
       <label>报价允许差额（元）
         <input id="tol" type="number" value="1000" min="0" step="100" class="w-sm">
       </label>
-      <label>自定义百分比（见算法约束3）（%）
+      <label>对下档上限（%）
         <input id="capPct" type="number" value="120" min="0" max="1000" step="1" class="w-sm">
       </label>
     </div>
+    <small class="muted">同一“系列”内，顺序即“从上到下”；可拖动行排序。未选择系列的行不做组内约束。</small>
   </div>
 </section>
 
   <!-- 录入表 -->
-  <h4 style="margin-top:1.2rem">③ 完善输入（可直接编辑，支持左右滑动）</h4>
+  <h4 style="margin-top:1.2rem">③ 完善输入（可直接编辑，支持左右滑动；拖拽“≡”更改顺序）</h4>
   <div class="sheet">
     <table role="grid">
       <thead>
         <tr>
+          <th class="drag-col">⇅</th>
           <th>项目名称</th>
+          <th>系列</th>
           <th>清单数量</th>
           <th>图纸数量</th>
           <th>统一系数单价</th>
           <th>成本单价</th>
           <th>最低报价</th>
+          <th>最高报价</th>
         </tr>
       </thead>
       <tbody id="tbody"></tbody>
@@ -144,94 +152,148 @@ function parseXLSX(file, cb){
   reader.onerror = ()=>cb(new Error("读取 Excel 失败"), null);
   reader.readAsArrayBuffer(file);
 }
-function parseDN(s){const m=String(s||"").match(/DN\s*([0-9]+)/i);return m?parseInt(m[1],10):null;}
-function sortByDN(rows){const t=rows.map((r)=>({dn:parseDN(r["项目名称"]),r})); if(!t.some(x=>x.dn!==null))return rows; t.sort((a,b)=>(a.dn??1e9)-(b.dn??1e9)); return t.map(x=>x.r);}
 function num(v){if(v===null||v===undefined) return null; const s=String(v).replace(/,/g,"").trim(); const x=parseFloat(s); return isNaN(x)?null:x;}
 function to2(x){return (Math.round(x*100)/100).toFixed(2);}
 
-// ===== 录入区 =====
+// ===== 录入区（拖拽 + 系列） =====
 const tbody=document.getElementById("tbody");
+
+function seriesSelect(defaultVal=""){
+  const sel = document.createElement("select");
+  const optBlank = document.createElement("option"); optBlank.value=""; optBlank.textContent="（无）";
+  sel.appendChild(optBlank);
+  for (let i=0;i<26;i++){
+    const ch = String.fromCharCode(65+i); // A..Z
+    const opt = document.createElement("option");
+    opt.value = ch; opt.textContent = ch;
+    sel.appendChild(opt);
+  }
+  sel.value = defaultVal || "";
+  return sel;
+}
+
 function rowToTr(r={}){
-  const cols=["项目名称","清单数量","图纸数量","统一系数单价","成本单价","最低报价"];
+  // 顺序：拖拽|项目名称|系列|清单|图纸|统一价|成本|最低|最高
   const tr=document.createElement("tr");
+  tr.setAttribute("draggable","true");
+
+  // 拖拽手柄
+  const tdDrag = document.createElement("td");
+  tdDrag.className = "drag-col";
+  tdDrag.innerHTML = '<span class="drag-handle">≡</span>';
+  tr.appendChild(tdDrag);
+
+  // 项目名称
+  let td=document.createElement("td"); td.classList.add("col-name");
+  let inp=document.createElement("input"); inp.type="text"; inp.classList.add("name-input");
+  inp.value=(r["项目名称"]??"");
+  td.appendChild(inp); tr.appendChild(td);
+
+  // 系列（A-Z）
+  td=document.createElement("td");
+  const sel=seriesSelect(r["系列"]??"");
+  td.appendChild(sel); tr.appendChild(td);
+
+  // 其余数字列
+  const cols=["清单数量","图纸数量","统一系数单价","成本单价","最低报价","最高报价"];
   cols.forEach(c=>{
     const td=document.createElement("td");
-    if (c === "项目名称") td.classList.add("col-name");
-    
-    const inp=document.createElement("input");
-    inp.type=(c==="项目名称"?"text":"number");
-    if (c === "项目名称") inp.classList.add("name-input");
-    if (inp.type==="number"){inp.step="0.01";}
-    inp.value=(r[c]??"");
-    td.appendChild(inp); tr.appendChild(td);
+    const ip=document.createElement("input");
+    ip.type="number"; ip.step="0.01"; ip.value=(r[c]??"");
+    td.appendChild(ip); tr.appendChild(td);
   });
   return tr;
 }
 
-function loadRows(rows){tbody.innerHTML=""; sortByDN(rows).forEach(r=>tbody.appendChild(rowToTr(r)));}
+function enableRowDrag() {
+  let dragRow = null;
+  tbody.querySelectorAll("tr").forEach(tr=>{
+    tr.addEventListener("dragstart", e=>{
+      dragRow = tr;
+      tr.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    tr.addEventListener("dragend", ()=>{
+      dragRow = null;
+      tr.classList.remove("dragging");
+      tbody.querySelectorAll("tr").forEach(x=>x.classList.remove("drag-over"));
+    });
+    tr.addEventListener("dragover", e=>{
+      e.preventDefault();
+      const target = tr;
+      if (!dragRow || dragRow===target) return;
+      target.classList.add("drag-over");
+      const rect = target.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height/2;
+      tbody.insertBefore(dragRow, before ? target : target.nextSibling);
+    });
+    tr.addEventListener("dragleave", ()=> tr.classList.remove("drag-over"));
+    tr.addEventListener("drop", e=>{
+      e.preventDefault();
+      tr.classList.remove("drag-over");
+    });
+  });
+}
+
+function loadRows(rows){
+  tbody.innerHTML="";
+  rows.forEach(r=>tbody.appendChild(rowToTr(r)));
+  enableRowDrag();
+}
 function getRows(){
   const rows=[];
   [...tbody.querySelectorAll("tr")].forEach(tr=>{
-    const t=[...tr.querySelectorAll("td input")];
+    const tds=[...tr.querySelectorAll("td")];
     const row={
-      "项目名称": t[0].value.trim(),
-      "清单数量": num(t[1].value),
-      "图纸数量": num(t[2].value),
-      "统一系数单价": num(t[3].value),
-      "成本单价": num(t[4].value),
-      "最低报价": num(t[5].value)
+      "项目名称": tds[1].querySelector("input").value.trim(),
+      "系列": (tds[2].querySelector("select").value||"").trim(),
+      "清单数量": num(tds[3].querySelector("input").value),
+      "图纸数量": num(tds[4].querySelector("input").value),
+      "统一系数单价": num(tds[5].querySelector("input").value),
+      "成本单价": num(tds[6].querySelector("input").value),
+      "最低报价": num(tds[7].querySelector("input").value),
+      "最高报价": num(tds[8].querySelector("input").value)
     };
     if(row["项目名称"]) rows.push(row);
   });
   return rows;
 }
-document.getElementById("btnAddRow").onclick=()=>tbody.appendChild(rowToTr({}));
+document.getElementById("btnAddRow").onclick=()=>{ tbody.appendChild(rowToTr({})); enableRowDrag(); };
 
-// 上传 CSV → 填充表格
-// 上传文件 → 自动判断 CSV 或 Excel
+// 上传：自动判定 CSV / Excel
 document.getElementById("file").addEventListener("change", e=>{
   const f = e.target.files[0]; 
   if(!f) return;
   const name = (f.name || "").toLowerCase();
 
   const handleRows = (rows)=>{
-  const fixed = rows.map(r=>({
-    "项目名称": (r["项目名称"] ?? "").toString().trim(),
-    "清单数量": num(r["清单数量"]),
-    "图纸数量": num(r["图纸数量"]),
-    "统一系数单价": num(r["统一系数单价"]),
-    "成本单价": num(r["成本单价"]),
-    "最低报价": num(r["最低报价"])
-  }));
-
-  // ✅ 新增：只保留“项目名称”非空的行
-  const cleaned = fixed.filter(r => r["项目名称"] !== "");
-
-  loadRows(cleaned);
-  document.getElementById("hint").textContent =
-    `已导入：有效行 ${cleaned.length} 条（已自动忽略无“项目名称”的行）`;
-};
-
+    const fixed = rows.map(r=>({
+      "项目名称": (r["项目名称"] ?? "").toString().trim(),
+      "系列": (r["系列"] ?? "").toString().trim(),
+      "清单数量": num(r["清单数量"]),
+      "图纸数量": num(r["图纸数量"]),
+      "统一系数单价": num(r["统一系数单价"]),
+      "成本单价": num(r["成本单价"]),
+      "最低报价": num(r["最低报价"]),
+      "最高报价": num(r["最高报价"])
+    }));
+    const cleaned = fixed.filter(r => r["项目名称"] !== "");
+    loadRows(cleaned);
+    document.getElementById("hint").textContent = `已导入：有效行 ${cleaned.length} 条（已忽略无“项目名称”的行）`;
+  };
 
   if (name.endsWith(".csv")) {
-    parseCSV(f, (err, rows)=>{
-      if(err){ alert(err.message); return; }
-      handleRows(rows);
-    });
+    parseCSV(f, (err, rows)=>{ if(err){ alert(err.message); return; } handleRows(rows); });
   } else if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
-    parseXLSX(f, (err, rows)=>{
-      if(err){ alert(err.message || "Excel 解析失败"); return; }
-      handleRows(rows);
-    });
+    parseXLSX(f, (err, rows)=>{ if(err){ alert(err.message || "Excel 解析失败"); return; } handleRows(rows); });
   } else {
     alert("仅支持 CSV / XLSX / XLS 文件");
   }
 });
 
-// ===== 计算（内部用线性规划，但界面不暴露数学词） =====
+// ===== 计算（线性规划，界面不暴露数学词） =====
 function buildAndSolve(rows, tol, capPct){
   const n=rows.length; if(!n) throw new Error("没有数据行");
-  // 基础校验：成本不能为空
   if(rows.some(r=>r["成本单价"]===null||isNaN(r["成本单价"]))){
     throw new Error("存在空的【成本单价】，请补全后再计算。");
   }
@@ -241,50 +303,67 @@ function buildAndSolve(rows, tol, capPct){
   const uprice  = rows.map(r=>+r["统一系数单价"]||0);
   const cost    = rows.map(r=>+r["成本单价"]);
   const minpRaw = rows.map(r=>r["最低报价"]);
+  const maxpRaw = rows.map(r=>r["最高报价"]);
+  const series  = rows.map(r=> (r["系列"]||"").trim());
 
-  // 最终下限：max(成本, 最低报价(若空则视为成本))
+  // 下限：max(成本, 最低报价(若空则视为成本))
   const floor = rows.map((_,i)=>{
     const m = (minpRaw[i]===null||isNaN(minpRaw[i])) ? cost[i] : +minpRaw[i];
     return Math.max(cost[i], m);
   });
 
-  // 模型
   const model={optimize:"obj",opType:"max",constraints:{},variables:{}};
-  // 清单口径允许差额
+
+  // 报价偏差容差（相对清单×统一价）
   const base = listQty.reduce((s,q,i)=>s+q*uprice[i],0);
   model.constraints["rep_up"]={max:base + (+tol||0)};
   model.constraints["rep_lo"]={max:(+tol||0) - base};
 
-  // 单价不降 & 上限（百分比×下一档统一价）
-  for(let i=1;i<n;i++) model.constraints[`mono_${i}`]={max:0};
-  for(let i=0;i<n-1;i++) model.constraints[`cap_${i}`]={max: (+capPct/100)*uprice[i+1] };
-  // ✅ 新增：报价不得超过统一价的 2 倍
-  for(let i=0;i<n;i++) {
+  // 每行通用约束：下限、上限(2×统一)、最高报价(如填)
+  for(let i=0;i<n;i++){
+    model.constraints[`floor_${i}`]={max:-floor[i]}; // -p_i <= -floor_i
     model.constraints[`cap2x_${i}`] = { max: 2 * uprice[i] };
+    if(maxpRaw[i] !== null && !isNaN(maxpRaw[i])){
+      model.constraints[`capMax_${i}`] = { max: +maxpRaw[i] };
+    }
   }
 
-
-  // 下限：-p_i <= -floor_i
-  for(let i=0;i<n;i++) model.constraints[`floor_${i}`]={max:-floor[i]};
-
-  // 变量（目标用图纸量）
+  // 变量
   for(let i=0;i<n;i++){
     const name=`p_${i}`; const v={obj:drawQty[i]};
     v["rep_up"]=listQty[i]; v["rep_lo"]=-listQty[i];
-    if(i<n-1) v[`cap_${i}`]=1;
     v[`floor_${i}`]=-1;
     v[`cap2x_${i}`] = 1;
+    if(maxpRaw[i] !== null && !isNaN(maxpRaw[i])) v[`capMax_${i}`]=1;
     model.variables[name]=v;
   }
-  // 单调：p_{i-1} - p_i <= 0
-  for(let i=1;i<n;i++){
-    const prev=`p_${i-1}`, cur=`p_${i}`;
-    model.variables[prev][`mono_${i}`]=(model.variables[prev][`mono_${i}`]||0)+1;
-    model.variables[cur][`mono_${i}`]=(model.variables[cur][`mono_${i}`]||0)-1;
+
+  // 仅对同系列、按“当前表格顺序”建立组内约束：单价不下降 + 对下档 cap%×统一价 上限
+  const groupMap = {};
+  for (let i=0;i<n;i++){
+    const g = series[i] || ""; // 空串 => 不分组
+    if (!groupMap[g]) groupMap[g] = [];
+    groupMap[g].push(i);
   }
+  let monoId = 0, capNextId = 0;
+  Object.entries(groupMap).forEach(([g, idxList])=>{
+    if (!g || idxList.length <= 1) return; // 无系列或单行不约束
+    for (let k=1;k<idxList.length;k++){
+      const iPrev = idxList[k-1], iCurr = idxList[k];
+      const monoName = `mono_${monoId++}`;
+      model.constraints[monoName] = { max: 0 }; // p_prev - p_curr ≤ 0
+      // 变量系数
+      model.variables[`p_${iPrev}`][monoName] = (model.variables[`p_${iPrev}`][monoName]||0)+1;
+      model.variables[`p_${iCurr}`][monoName] = (model.variables[`p_${iCurr}`][monoName]||0)-1;
+
+      const capName = `cap_${capNextId++}`;
+      model.constraints[capName] = { max: (+capPct/100) * uprice[iCurr] }; // p_prev ≤ cap% × u_next
+      model.variables[`p_${iPrev}`][capName] = 1;
+    }
+  });
 
   const res=solver.Solve(model);
-  if(!res.feasible) throw new Error("当前规则下无解，请适当调大“允许差额”或“上限百分比”");
+  if(!res.feasible) throw new Error("当前规则下无解，请适当调大“允许差额”或“对下档上限(%)”");
 
   const p=Array.from({length:n},(_,i)=>res[`p_${i}`]);
 
@@ -323,25 +402,24 @@ function renderOutTable(rows){
   headers.forEach((h,idx)=>{
     const th=document.createElement("th");
     th.textContent=h;
-    if (idx===0) th.classList.add("col-name");   // ✅ 首列表头加类
+    if (idx===0) th.classList.add("col-name");
     trh.appendChild(th);
   });
   thead.appendChild(trh); tbl.appendChild(thead);
   
-  // 行数据
-  const tbody=document.createElement("tbody");
+  const tbodyOut=document.createElement("tbody");
   rows.forEach(r=>{
     const tr=document.createElement("tr");
     headers.forEach((h,idx)=>{
       const td=document.createElement("td");
-      if (idx===0) td.classList.add("col-name"); // ✅ 首列单元格加类
+      if (idx===0) td.classList.add("col-name");
       const v=r[h];
       td.textContent=(typeof v==="number")?to2(v):v;
       tr.appendChild(td);
     });
-    tbody.appendChild(tr);
+    tbodyOut.appendChild(tr);
   });
-  tbl.appendChild(tbody);
+  tbl.appendChild(tbodyOut);
 }
 
 // 计算按钮
@@ -366,7 +444,7 @@ document.getElementById("btnSolve").onclick=()=>{
 
     renderOutTable(out);
     window._outRows = out; 
-    window._outRowsBase = out.map(r => ({ ...r }));  // ✅ 保存基线
+    window._outRowsBase = out.map(r => ({ ...r }));  // 保存基线
     document.getElementById("btnDownload").disabled = false;
     document.getElementById("btnJitter").disabled = false;
   }catch(e){
@@ -379,32 +457,29 @@ document.getElementById("btnSolve").onclick=()=>{
 document.getElementById("btnDownload").onclick=()=>{
   const rows=window._outRows||[]; if(!rows.length)return;
   const headers=["项目名称","清单数量","图纸数量","统一系数单价","清单量*统一系数单价","建议报价","图纸量*成本单价","图纸量*建议报价","清单量*建议报价"];
-  const csv=[headers.join(",")].concat(rows.map(r=>headers.map(h=>r[h]??"").join(","))).join("\n");
+  const csv=[headers.join(",")].concat(rows.map(r=>headers.map(h=>{
+    const v=r[h]; return (typeof v==="number")?to2(v): (v??"");
+  }).join(","))).join("\n");
   const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"});
   const url=URL.createObjectURL(blob); const a=document.createElement("a");
   a.href=url; a.download="报价结果.csv"; a.click(); URL.revokeObjectURL(url);
 };
 
-// ✅ 改动小数点：对“系数2单价”加随机[-0.5, +0.5]，保留两位小数；随后就地重算汇总与表格
+// 改动小数点：每次以“基线”抖动；若偏差不在[0,2*tol]，丢弃并回到基线
 function jitterPrices() {
-  // 必须先有基线
   if (!window._outRowsBase || !window._outRowsBase.length) {
     alert("请先点击【开始计算】得到一份基线结果");
     return;
   }
-
-  // 每次从“基线”复制一份开始抖动
   const base = window._outRowsBase;
   const rows = base.map(r => ({ ...r }));
 
-  // 抖动幅度：±min(0.5, 价格的 2%)，两位小数
   function jitterFor(p) {
     const maxStep = Math.min(0.5, Math.max(0.01, Math.abs(p) * 0.02));
     const delta = (Math.random() * 2 - 1) * maxStep;
     return Math.round((p + delta) * 100) / 100;
   }
 
-  // 逐行抖动“建议报价”，并重算依赖列
   rows.forEach(r => {
     const oldP = +r["建议报价"] || 0;
     const jq   = +r["图纸数量"] || 0;
@@ -413,24 +488,20 @@ function jitterPrices() {
     r["建议报价"]         = newP;
     r["图纸量*建议报价"]  = jq * newP;
     r["清单量*建议报价"]  = lq * newP;
-    // 其他列（统一价、成本）不变
   });
 
-  // 计算本次抖动后的合计与偏差
   const sumA = rows.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
   const sumB = rows.reduce((s,r)=>s + (+r["清单量*建议报价"]||0),   0);
-  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0); // ✅ 字段名修正
+  const sumC = rows.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0);
   const sumD = rows.reduce((s,r)=>s + (+r["图纸量*建议报价"]||0),     0);
 
   const tol = +document.getElementById("tol").value || 0;
   const diff = sumB - sumA;
   const lower = 0, upper = 2 * tol;
 
-  // 若偏差越界，则不采用这次抖动，恢复基线显示
   if (diff < lower || diff > upper) {
     renderOutTable(base);
     window._outRows = base.map(r => ({ ...r }));
-    // 基线合计
     const bA = base.reduce((s,r)=>s + (+r["清单量*统一系数单价"]||0), 0);
     const bB = base.reduce((s,r)=>s + (+r["清单量*建议报价"]||0),   0);
     const bC = base.reduce((s,r)=>s + (+r["图纸量*成本单价"]||0),     0);
@@ -445,7 +516,6 @@ function jitterPrices() {
     return;
   }
 
-  // 偏差在 [0, 2*tol] 内：采用并刷新显示，但不改变“基线”
   document.getElementById("sumA").textContent = to2(sumA);
   document.getElementById("sumB").textContent = to2(sumB);
   document.getElementById("sumC").textContent = to2(sumC);
@@ -454,29 +524,11 @@ function jitterPrices() {
   document.getElementById("profit").textContent = to2(sumD - sumC);
 
   renderOutTable(rows);
-  window._outRows = rows; // 仅当前显示用，下载用
+  window._outRows = rows;
   document.getElementById("hint").textContent = "已随机微调报价小数位（偏差在可接受范围内）";
 }
-
 document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 </script>
 
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
