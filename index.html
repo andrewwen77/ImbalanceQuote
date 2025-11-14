@@ -11,7 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <style>
-  body{max-width:1200px;margin:0 auto;padding:1rem;}
+  body{max-width:1600px;margin:0 auto;padding:1rem;}
   h2{margin-bottom:.2rem}
   .muted{color:#6b7280}
   .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
@@ -103,6 +103,7 @@
     1) 在报价允许差额内最大化真实利润；<br>
     2) 同品类零部件中，按表格顺序（从上到下）设置：单价不下降；且本档建议报价 ≤ 下一档统一价 × 自定义百分比；比如自定义百分比为120%，则HDPE双壁波纹管品类中，DN1000管建议报价不高于DN1200管的统一价乘120%<br>
     3) 建议报价不低于最低报价，不高于最高报价；若没有填写最低、最高报价，则不低于成本单价，不高于统一系数单价的两倍。
+    4）同品类相邻两行的建议报价差价 ≥ （统一系数单价差价 × 设定百分比）
   </p>
 
 <!-- 参数与上传 -->
@@ -131,6 +132,9 @@
       </label>
       <label>对下档上限（%）
         <input id="capPct" type="number" value="120" min="0" max="1000" step="1" class="w-sm">
+      </label>
+      <label>相邻差价下限（%×统一价差）
+        <input id="gapPct" type="number" value="10" min="0" max="100" step="1" class="w-sm">
       </label>
     </div>
     <small class="muted">同一“品类”内，顺序即“从上到下”；可拖动行排序。未选择品类的行不做组内约束。</small>
@@ -354,7 +358,8 @@ document.getElementById("file").addEventListener("change", e=>{
 });
 
 // ===== 计算（线性规划，界面不暴露数学词） =====
-function buildAndSolve(rows, tol, capPct){
+function buildAndSolve(rows, tol, capPct, gapPct){
+  const gapFrac = (+gapPct || 0) / 100;
   const n=rows.length; if(!n) throw new Error("没有数据行");
   if(rows.some(r=>r["成本单价"]===null||isNaN(r["成本单价"]))){
     throw new Error("存在空的【成本单价】，请补全后再计算。");
@@ -421,7 +426,7 @@ function buildAndSolve(rows, tol, capPct){
     if (!groupMap[g]) groupMap[g] = [];
     groupMap[g].push(i);
   }
-  let monoId = 0, capNextId = 0;
+  let monoId = 0, capNextId = 0, gapId = 0;
   Object.entries(groupMap).forEach(([g, idxList])=>{
     if (!g || idxList.length <= 1) return; // 无品类或单行不约束
     for (let k=1;k<idxList.length;k++){
@@ -435,6 +440,17 @@ function buildAndSolve(rows, tol, capPct){
       const capName = `cap_${capNextId++}`;
       model.constraints[capName] = { max: (+capPct/100) * uprice[iCurr] }; // p_prev ≤ cap% × u_next
       model.variables[`p_${iPrev}`][capName] = 1;
+
+      if (gapFrac > 0) {
+        const rhs = gapFrac * Math.max(0, uprice[iCurr] - uprice[iPrev]);
+        if (rhs > 0) {
+          const gapName = `gap_${gapId++}`;
+          // 线性化为：p_prev - p_curr ≤ -rhs
+          model.constraints[gapName] = { max: -rhs };
+          model.variables[`p_${iPrev}`][gapName] = (model.variables[`p_${iPrev}`][gapName]||0) + 1;
+          model.variables[`p_${iCurr}`][gapName] = (model.variables[`p_${iCurr}`][gapName]||0) - 1;
+        }
+      }
     }
   });
 
@@ -505,8 +521,9 @@ document.getElementById("btnSolve").onclick=()=>{
     if(!rows.length){alert("请先录入或导入数据");return;}
     const tol=+document.getElementById("tol").value||0;
     const capPct=+document.getElementById("capPct").value||100;
+    const gapPct = +document.getElementById("gapPct").value || 0;
 
-    const {out,sumA,sumB,sumC,sumD}=buildAndSolve(rows,tol,capPct);
+    const {out,sumA,sumB,sumC,sumD}=buildAndSolve(rows, tol, capPct, gapPct);
 
     document.getElementById("sumA").textContent=to2(sumA);
     document.getElementById("sumB").textContent=to2(sumB);
@@ -608,6 +625,7 @@ document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 
 </body>
 </html>
+
 
 
 
