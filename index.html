@@ -172,12 +172,12 @@
   <h4 style="margin-top:1.5rem">④ 优化结果</h4>
 
   <div id="summaryCards" class="grid-3" style="display:none">
-    <article><header>清单×统一价 合计</header><strong id="sumA">-</strong></article>
-    <article><header>清单×报价 合计</header><strong id="sumB">-</strong></article>
-    <article><header>图纸×成本单价 合计</header><strong id="sumC">-</strong></article>
+    <article><header>① 清单量×统一系数价 合计</header><strong id="sumA">-</strong></article>
+    <article><header>② 清单量×建议报价 合计</header><strong id="sumB">-</strong></article>
+    <article><header>③ 图纸量×成本单价 合计</header><strong id="sumC">-</strong></article>
   </div>
   <div id="summaryCards2" class="grid-3" style="display:none;margin-top:.75rem">
-    <article><header>图纸×报价 合计</header><strong id="sumD">-</strong></article>
+    <article><header>④ 图纸量×建议报价 合计</header><strong id="sumD">-</strong></article>
     <article><header>报价偏差（= ② − ①）</header><strong id="diffAB">-</strong></article>
     <article><header>真实利润（= ④ − ③）</header><strong id="profit">-</strong></article>
   </div>
@@ -625,6 +625,7 @@ document.getElementById("btnJitter").addEventListener("click", jitterPrices);
 
 </body>
 </html>
+
 
 
 
